@@ -16,6 +16,7 @@ dependencies = [
     "pandas>=2.2",
     "Pillow>=10.2",
     "tqdm>=4.66",
+    "python-Levenshtein>=0.21",
 ]
 
 [project.scripts]
