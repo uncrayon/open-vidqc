@@ -1,0 +1,68 @@
+# Frame extraction
+video:
+  sample_fps: 5                 # Frames per second to extract
+  max_duration_sec: 10          # Truncate longer clips
+  max_resolution: 720           # Downscale to this height if source is larger
+
+# TEXT_INCONSISTENCY detection
+text:
+  ocr_languages: ["en"]
+  ocr_gpu: false                # Set true if GPU available.
+                                # GPU mode requires pytorch with CUDA.
+                                # CPU mode uses pytorch CPU-only (default install).
+  ocr_skip_ssim_threshold: 0.995 # Skip OCR if frame is near-identical to previous.
+                                  # Set high (0.995 not 0.98) to avoid skipping frames
+                                  # where small text regions mutated on a stable background.
+  bbox_iou_threshold: 0.3       # Min IoU to match text regions across frames
+  edit_distance_threshold: 2    # Flag frame pair if edit distance exceeds this
+  confidence_drop_threshold: 0.3
+
+  # False positive suppression (blur/transition handling)
+  fp_suppression:
+    global_ssim_floor: 0.7        # If global SSIM < this, scene is changing too much
+                                  # to reliably attribute text changes to artifacts.
+                                  # Used as a feature, not a hard filter.
+    confidence_rolling_window: 7  # Frames for rolling variance of OCR confidence
+    monotonic_ratio_threshold: 0.8  # Above this = likely smooth transition, not artifact
+    substitution_ratio_min: 0.4  # Below this = mostly deletions = likely blur
+
+# TEMPORAL_FLICKER detection
+temporal:
+  ssim_spike_threshold: 0.85    # Frame pairs with SSIM below this are flagged
+  patch_grid: [4, 4]            # Divide frame into NxM patches
+  diff_acceleration_threshold: 0.15
+
+  # Scene cut detection & segmentation
+  scene_cut:
+    cut_ssim_threshold: 0.4       # SSIM below this = potential cut point
+    post_cut_stability_window: 3  # Frames after cut to check for stabilization
+    post_cut_stability_min: 0.8   # Mean SSIM after cut must exceed this to confirm cut
+    min_segment_frames: 5         # Segments shorter than this are skipped
+                                  # (not enough frames to evaluate flicker)
+
+  # False positive suppression
+  fp_suppression:
+    instability_duration_min: 3   # Consecutive unstable frames needed to flag flicker
+    post_spike_window: 5          # Frames after worst spike to measure stability
+    content_persistence_offset: 5 # Frames before/after spike to compare content
+
+# Classifier
+model:
+  binary_threshold: 0.5         # artifact=true when P(NONE) < this value.
+                                # Higher = more recall, more false positives (0.6-0.7 for quality gates).
+                                # Lower = more precision, fewer false positives (0.3-0.4 for triage).
+  xgboost:
+    n_estimators: 50
+    max_depth: 3
+    learning_rate: 0.1
+    min_child_weight: 3
+    subsample: 0.8
+    colsample_bytree: 0.8
+    objective: "multi:softprob"
+    num_class: 3
+    seed: 42
+
+# Logging
+logging:
+  level: INFO                   # DEBUG | INFO | WARNING | ERROR
+  file: logs/vidqc.log
