@@ -1,6 +1,6 @@
-"""Feature vector manifest for TEXT_INCONSISTENCY detection.
+"""Feature vector manifest for vidqc.
 
-Defines the complete list of text features in extraction order,
+Defines the complete list of features (text + temporal) in extraction order,
 ensuring consistent feature vector shape across all clips.
 """
 
@@ -51,20 +51,70 @@ TEXT_FEATURE_NAMES = [
 
 EXPECTED_TEXT_FEATURE_COUNT = 29
 
+# Complete list of temporal features (14 features)
+TEMPORAL_FEATURE_NAMES = [
+    # Per-frame metrics - SSIM (3 stats)
+    "ssim_mean",
+    "ssim_min",
+    "ssim_std",
+    # Per-frame metrics - MAE (2 stats)
+    "mae_mean",
+    "mae_max",
+    # Per-frame metrics - Histogram correlation (2 stats)
+    "hist_corr_mean",
+    "hist_corr_min",
+    # Per-frame metrics - Patch instability (2 stats)
+    "patch_instability_mean",
+    "patch_instability_max",
+    # Per-frame metrics - Diff acceleration (2 stats)
+    "diff_acceleration_mean",
+    "diff_acceleration_max",
+    # False positive suppression (3 features)
+    "instability_duration",
+    "post_spike_stability",
+    "spike_isolation_ratio",
+]
+
+EXPECTED_TEMPORAL_FEATURE_COUNT = 14
+
+# Combined feature vector (text + temporal)
+COMBINED_FEATURE_NAMES = TEXT_FEATURE_NAMES + TEMPORAL_FEATURE_NAMES
+EXPECTED_COMBINED_FEATURE_COUNT = 43
+
 
 def get_zero_features() -> dict[str, float]:
-    """Return complete feature dict with all values set to 0.0.
+    """Return complete text feature dict with all values set to 0.0.
 
     Used when has_text_regions=0 to ensure consistent feature vector shape.
 
     Returns:
-        Dict mapping feature names to 0.0
+        Dict mapping text feature names to 0.0
     """
     return {name: 0.0 for name in TEXT_FEATURE_NAMES}
 
 
+def get_zero_temporal_features() -> dict[str, float]:
+    """Return complete temporal feature dict with all values set to 0.0.
+
+    Used when no valid segments exist.
+
+    Returns:
+        Dict mapping temporal feature names to 0.0
+    """
+    return {name: 0.0 for name in TEMPORAL_FEATURE_NAMES}
+
+
+def get_zero_combined_features() -> dict[str, float]:
+    """Return complete combined feature dict with all values set to 0.0.
+
+    Returns:
+        Dict mapping all feature names to 0.0
+    """
+    return {name: 0.0 for name in COMBINED_FEATURE_NAMES}
+
+
 def validate_features(features: dict[str, float]) -> None:
-    """Validate that feature dict is complete and valid.
+    """Validate that text feature dict is complete and valid.
 
     Args:
         features: Feature dict to validate
@@ -94,3 +144,63 @@ def validate_features(features: dict[str, float]) -> None:
             raise ValueError(f"Feature '{name}' is NaN")
         if np.isinf(value):
             raise ValueError(f"Feature '{name}' is Inf")
+
+
+def validate_temporal_features(features: dict[str, float]) -> None:
+    """Validate that temporal feature dict is complete and valid.
+
+    Args:
+        features: Feature dict to validate
+
+    Raises:
+        ValueError: If features are invalid (missing keys, NaN, Inf, wrong count)
+    """
+    if len(features) != EXPECTED_TEMPORAL_FEATURE_COUNT:
+        missing = set(TEMPORAL_FEATURE_NAMES) - set(features.keys())
+        extra = set(features.keys()) - set(TEMPORAL_FEATURE_NAMES)
+        raise ValueError(
+            f"Expected {EXPECTED_TEMPORAL_FEATURE_COUNT} temporal features, got {len(features)}. "
+            f"Missing: {missing}, Extra: {extra}"
+        )
+
+    missing = set(TEMPORAL_FEATURE_NAMES) - set(features.keys())
+    if missing:
+        raise ValueError(f"Missing temporal features: {missing}")
+
+    import numpy as np
+
+    for name, value in features.items():
+        if np.isnan(value):
+            raise ValueError(f"Temporal feature '{name}' is NaN")
+        if np.isinf(value):
+            raise ValueError(f"Temporal feature '{name}' is Inf")
+
+
+def validate_combined_features(features: dict[str, float]) -> None:
+    """Validate that combined feature dict is complete and valid.
+
+    Args:
+        features: Feature dict to validate
+
+    Raises:
+        ValueError: If features are invalid (missing keys, NaN, Inf, wrong count)
+    """
+    if len(features) != EXPECTED_COMBINED_FEATURE_COUNT:
+        missing = set(COMBINED_FEATURE_NAMES) - set(features.keys())
+        extra = set(features.keys()) - set(COMBINED_FEATURE_NAMES)
+        raise ValueError(
+            f"Expected {EXPECTED_COMBINED_FEATURE_COUNT} combined features, got {len(features)}. "
+            f"Missing: {missing}, Extra: {extra}"
+        )
+
+    missing = set(COMBINED_FEATURE_NAMES) - set(features.keys())
+    if missing:
+        raise ValueError(f"Missing combined features: {missing}")
+
+    import numpy as np
+
+    for name, value in features.items():
+        if np.isnan(value):
+            raise ValueError(f"Combined feature '{name}' is NaN")
+        if np.isinf(value):
+            raise ValueError(f"Combined feature '{name}' is Inf")
