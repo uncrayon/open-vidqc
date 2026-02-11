@@ -1,0 +1,41 @@
+# vidqc prompt bank for AI video generation
+# One prompt per line. Lines starting with # are comments.
+# Organized by target artifact type.
+
+# === TEXT_INCONSISTENCY targets ===
+# Scenes with visible text: signs, books, screens, menus
+A storefront with neon signs at night in a busy city
+A person reading a newspaper in a park, text clearly visible
+A classroom whiteboard with equations being written
+A close-up of a restaurant menu being read at a table
+A street scene with road signs and shop names in a European town
+A library with book spines and title text visible on shelves
+A hand writing a letter with legible handwriting on white paper
+A digital clock on a wall counting seconds in a modern office
+
+# === TEMPORAL_FLICKER targets ===
+# High-frequency detail: water, fire, foliage, reflections
+A candle flickering in a dark room with reflections on glass
+Ocean waves crashing on rocks at sunset
+Wind blowing through autumn leaves in a forest
+A campfire burning at night with sparks floating upward
+Rain falling on a puddle with rippling reflections
+A fountain with water splashing in sunlight, slow motion
+
+# === CLEAN with scene cuts ===
+# Two-scene prompts to produce hard scene cuts
+First show a forest, then cut to a city street at night
+A sunrise over mountains followed by a bustling indoor market
+A calm lake scene that transitions to a crowded subway platform
+
+# === CLEAN with blur ===
+# Defocus transitions — critical negative examples for text detection
+Camera slowly goes out of focus on a flower in a garden
+A rack focus shot from a foreground object to a distant landscape
+Soft bokeh lights at night slowly coming into focus
+
+# === CLEAN simple ===
+# Low complexity, slow scenes: still landscape, single object
+A still landscape of rolling green hills under a clear blue sky
+A single red apple on a white table with soft lighting
+A sleeping cat curled up on a sunny windowsill

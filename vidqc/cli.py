@@ -1,7 +1,198 @@
-"""CLI interface for vidqc."""
+"""CLI interface for vidqc.
+
+Usage:
+    python -m vidqc train --config config.yaml
+    python -m vidqc eval --config config.yaml
+    python -m vidqc predict --input clip.mp4
+    python -m vidqc batch --input samples/ --output predictions.jsonl
+"""
 
 import argparse
+import json
 import sys
+from pathlib import Path
+
+from vidqc.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+def _load_config(config_path: str) -> dict:
+    """Load config with error handling.
+
+    Args:
+        config_path: Path to config YAML file
+
+    Returns:
+        Config dict
+    """
+    from vidqc.config import load_config
+
+    try:
+        return load_config(config_path)
+    except ValueError as e:
+        logger.error(f"Invalid configuration: {e}")
+        sys.exit(1)
+
+
+def cmd_train(args: argparse.Namespace) -> None:
+    """Handle the 'train' command."""
+    from vidqc.train import train_model
+
+    config = _load_config(args.config)
+
+    # Validate labels file exists
+    if not Path(args.labels).exists():
+        logger.error(f"Labels file not found: {args.labels}")
+        sys.exit(1)
+
+    cache_path = "features_cache.pkl" if args.cache else ""
+
+    try:
+        classifier, manifest = train_model(
+            labels_csv=args.labels,
+            output_dir=args.output_dir,
+            config=config,
+            cache_path=cache_path if args.cache else "features_cache.pkl",
+        )
+        print("\nTraining complete!")
+        print(f"Model: {manifest['model_path']}")
+        print(f"CV F1: {manifest['cv_mean_f1']:.3f} +/- {manifest['cv_std_f1']:.3f}")
+        print(f"Artifacts saved to: {args.output_dir}")
+    except FileNotFoundError as e:
+        logger.error(str(e))
+        sys.exit(1)
+    except ValueError as e:
+        logger.error(f"Training failed: {e}")
+        sys.exit(1)
+
+
+def cmd_eval(args: argparse.Namespace) -> None:
+    """Handle the 'eval' command."""
+    from vidqc.eval import evaluate_model
+
+    config = _load_config(args.config)
+
+    # Resolve model path
+    model_path = str(Path(args.model_dir) / "model.json")
+    if not Path(model_path).exists():
+        logger.error(f"Model not found: {model_path}")
+        sys.exit(1)
+
+    if not Path(args.labels).exists():
+        logger.error(f"Labels file not found: {args.labels}")
+        sys.exit(1)
+
+    # Check for training manifest (for CV std criterion)
+    manifest_path = str(Path(args.model_dir) / "training_manifest.json")
+    if not Path(manifest_path).exists():
+        manifest_path = None
+
+    output_path = str(Path(args.model_dir) / "eval_results.json")
+
+    try:
+        results = evaluate_model(
+            labels_csv=args.labels,
+            model_path=model_path,
+            output_path=output_path,
+            config=config,
+            training_manifest_path=manifest_path,
+        )
+        print("\n=== Evaluation Complete ===")
+        print(f"Results saved to: {output_path}")
+        print(f"Success criteria met: {results['success_criteria_met']}")
+    except FileNotFoundError as e:
+        logger.error(str(e))
+        sys.exit(1)
+    except ValueError as e:
+        logger.error(f"Evaluation failed: {e}")
+        sys.exit(1)
+
+
+def cmd_predict(args: argparse.Namespace) -> None:
+    """Handle the 'predict' command."""
+    from vidqc.predict import predict_clip
+
+    config = _load_config(args.config)
+
+    # Validate input
+    if not Path(args.input).exists():
+        logger.error(f"Video file not found: {args.input}")
+        sys.exit(1)
+
+    # Resolve model path
+    model_path = str(Path(args.model_dir) / "model.json")
+    if not Path(model_path).exists():
+        logger.error(f"Model not found: {model_path}")
+        sys.exit(1)
+
+    try:
+        prediction = predict_clip(args.input, model_path, config)
+        print(json.dumps(prediction.model_dump(), indent=2, default=str))
+    except FileNotFoundError as e:
+        logger.error(str(e))
+        sys.exit(1)
+    except ValueError as e:
+        logger.error(f"Prediction failed: {e}")
+        sys.exit(1)
+
+
+def cmd_batch(args: argparse.Namespace) -> None:
+    """Handle the 'batch' command."""
+    from vidqc.predict import predict_clip
+
+    config = _load_config(args.config)
+
+    # Resolve model path
+    model_path = str(Path(args.model_dir) / "model.json")
+    if not Path(model_path).exists():
+        logger.error(f"Model not found: {model_path}")
+        sys.exit(1)
+
+    # Find video files in input directory
+    input_path = Path(args.input)
+    if not input_path.exists():
+        logger.error(f"Input path not found: {args.input}")
+        sys.exit(1)
+
+    if input_path.is_dir():
+        video_files = sorted(input_path.glob("*.mp4"))
+        if not video_files:
+            logger.error(f"No .mp4 files found in {args.input}")
+            sys.exit(1)
+    else:
+        logger.error(f"Input must be a directory: {args.input}")
+        sys.exit(1)
+
+    logger.info(f"Batch prediction on {len(video_files)} clips")
+
+    # Process each clip, write JSONL
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    succeeded = 0
+    failed = 0
+
+    with open(output_path, "w") as f:
+        for i, video_file in enumerate(video_files):
+            logger.info(f"[{i+1}/{len(video_files)}] {video_file.name}")
+            try:
+                prediction = predict_clip(str(video_file), model_path, config)
+                line = json.dumps(prediction.model_dump(), default=str)
+                f.write(line + "\n")
+                succeeded += 1
+            except Exception as e:
+                logger.error(f"Failed: {video_file.name}: {e}")
+                error_line = json.dumps({
+                    "clip_id": video_file.name,
+                    "error": str(e),
+                })
+                f.write(error_line + "\n")
+                failed += 1
+
+    print("\nBatch prediction complete.")
+    print(f"Results: {succeeded} succeeded, {failed} failed")
+    print(f"Output: {args.output}")
 
 
 def main() -> None:
@@ -15,22 +206,23 @@ def main() -> None:
     # Train command
     train_parser = subparsers.add_parser("train", help="Train the classifier")
     train_parser.add_argument("--config", default="config.yaml", help="Config file path")
-    train_parser.add_argument("--labels", default="labels.csv", help="Labels CSV path")
-    train_parser.add_argument("--samples", default="samples/", help="Samples directory")
+    train_parser.add_argument(
+        "--labels", default="samples/labels.csv", help="Labels CSV path"
+    )
     train_parser.add_argument("--output-dir", default="models/", help="Output directory")
     train_parser.add_argument(
-        "--cache/--no-cache",
-        dest="cache",
-        action="store_true",
+        "--cache",
+        action=argparse.BooleanOptionalAction,
         default=True,
-        help="Cache extracted features",
+        help="Cache extracted features (default: enabled)",
     )
 
     # Eval command
     eval_parser = subparsers.add_parser("eval", help="Evaluate the classifier")
     eval_parser.add_argument("--config", default="config.yaml", help="Config file path")
-    eval_parser.add_argument("--labels", default="labels.csv", help="Labels CSV path")
-    eval_parser.add_argument("--samples", default="samples/", help="Samples directory")
+    eval_parser.add_argument(
+        "--labels", default="samples/labels.csv", help="Labels CSV path"
+    )
     eval_parser.add_argument("--model-dir", default="models/", help="Model directory")
 
     # Predict command
@@ -40,8 +232,10 @@ def main() -> None:
     predict_parser.add_argument("--config", default="config.yaml", help="Config file path")
 
     # Batch command
-    batch_parser = subparsers.add_parser("batch", help="Batch predict on multiple clips")
-    batch_parser.add_argument("--input", required=True, help="Input directory")
+    batch_parser = subparsers.add_parser(
+        "batch", help="Batch predict on a directory of clips"
+    )
+    batch_parser.add_argument("--input", required=True, help="Input directory of .mp4 files")
     batch_parser.add_argument(
         "--output", default="predictions.jsonl", help="Output JSONL path"
     )
@@ -54,10 +248,20 @@ def main() -> None:
         parser.print_help()
         sys.exit(1)
 
-    # Stub implementations - will be filled in later milestones
-    print(f"Command '{args.command}' not yet implemented.")
-    print("Milestone 1: CLI scaffolding complete.")
-    sys.exit(0)
+    # Dispatch to command handler
+    handlers = {
+        "train": cmd_train,
+        "eval": cmd_eval,
+        "predict": cmd_predict,
+        "batch": cmd_batch,
+    }
+
+    handler = handlers.get(args.command)
+    if handler:
+        handler(args)
+    else:
+        parser.print_help()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

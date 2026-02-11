@@ -60,12 +60,12 @@ def main():
         return 1
 
     df = pd.DataFrame(results)
-    print(f'\n=== Feature Extraction Summary ===')
+    print('\n=== Feature Extraction Summary ===')
     print(f'Total clips processed: {len(df)}')
     print(f'Clips with text: {(df["has_text_regions"] == 1).sum()}')
     print(f'Clips without text: {(df["has_text_regions"] == 0).sum()}')
 
-    print(f'\n=== Feature Separability Check ===')
+    print('\n=== Feature Separability Check ===')
     text_artifact = df[df['category'] == 'TEXT_INCONSISTENCY']
     clean_clips = df[df['category'].str.startswith('CLEAN')]
 
@@ -85,12 +85,12 @@ def main():
         clean_edit_mean = clean_clips["edit_distance_max"].mean()
 
         if artifact_edit_mean > clean_edit_mean:
-            print(f'\n✓ Feature separability confirmed: TEXT_INCONSISTENCY has higher edit_distance')
+            print('\n✓ Feature separability confirmed: TEXT_INCONSISTENCY has higher edit_distance')
         else:
-            print(f'\n⚠ Warning: TEXT_INCONSISTENCY edit_distance not higher than CLEAN')
-            print(f'  This may indicate issues with synthetic data generation')
+            print('\n⚠ Warning: TEXT_INCONSISTENCY edit_distance not higher than CLEAN')
+            print('  This may indicate issues with synthetic data generation')
 
-    print(f'\n✓ All exit criteria checks passed!')
+    print('\n✓ All exit criteria checks passed!')
     return 0
 
 if __name__ == '__main__':

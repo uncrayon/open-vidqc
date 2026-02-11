@@ -4,7 +4,7 @@ Automated detection and classification of visual artifacts in AI-generated video
 
 ## Version
 
-v0.1.0 (in development - Milestones 1-5 complete)
+v0.1.0 (Milestones 1–7 complete)
 
 ## Features
 
@@ -15,8 +15,8 @@ v0.1.0 (in development - Milestones 1-5 complete)
 - **Explainable predictions** with frame-level evidence and probability scores
 - **Scene-aware analysis** with automatic scene cut detection and per-segment analysis
 - **Smart caching** for feature extraction (106x faster on repeated runs)
-- **Progress bars** for real-time feedback during training
-- **CLI-based workflow** for training, evaluation, and prediction
+- **CLI** with four commands: train, eval, predict, batch
+- **Docker** multi-stage build for deployment
 
 ## Requirements
 
@@ -36,6 +36,9 @@ uv sync
 # Install development dependencies
 uv sync --group dev
 
+# Install dataset generation tools (Sora/Veo-3 API clients)
+uv sync --group dataset
+
 # Verify installation
 uv run python -m vidqc --help
 ```
@@ -45,59 +48,38 @@ uv run python -m vidqc --help
 ### 1. Generate Synthetic Dataset
 
 ```bash
-# Generate 30 synthetic clips for development
 uv run python tools/make_dataset.py --output samples/ --count 30
-
-# This creates:
-# - samples/*.mp4 (video clips with 6 artifact types)
-# - samples/labels.csv (ground truth labels)
 ```
 
-**Clip types generated:**
-- `text_*` — TEXT_INCONSISTENCY artifacts (character swaps, jitter, erasure)
-- `flicker_*` — TEMPORAL_FLICKER artifacts (brightness oscillation, color shifts)
-- `clean_text_*` — Clean clips with stable text
-- `clean_notext_*` — Clean clips without text
-- `clean_scenecut_*` — Clean clips with scene transitions
-- `clean_blur_*` — Clean clips with motion blur
+This creates 30 video clips across 6 types with ground truth labels in `samples/labels.csv`.
 
-### 2. Train Classifier
+### 2. Train
 
 ```bash
-# Train on synthetic dataset
-uv run python -m vidqc.train --labels samples/labels.csv --output models/
-
-# With custom cache location
-uv run python -m vidqc.train --labels samples/labels.csv --output models/ --cache my_cache.pkl
+uv run python -m vidqc train --labels samples/labels.csv --output-dir models/
 ```
 
-**Training output:**
-```
-Extracting features:  50%|█████     | 15/30 clips [12:30<12:30, 50.0s/clip]
-  OCR frames:  71%|███████   | 17/24 frames [00:54<00:22, 3.2s/frame]
-
-Cross-validation:  60%|██████    | 3/5 folds [00:09<00:06, 3.0s/fold]
-Fold 3 F1: 0.850
-
-CV Mean F1: 0.847 ± 0.023
-Training complete!
-Model: models/model.json
-```
-
-**Output files:**
+Output:
 - `models/model.json` — Trained XGBoost model
-- `models/training_manifest.json` — Training metadata and metrics
+- `models/training_manifest.json` — Training metadata and CV metrics
 - `models/feature_importances.json` — Feature importance rankings
 - `features_cache.pkl` — Cached features for fast retraining
 
-### 3. Predict on a Single Clip
+### 3. Evaluate
 
 ```bash
-# Single clip prediction
-uv run python -m vidqc.predict --video samples/text_001.mp4 --model models/model.json
+uv run python -m vidqc eval --labels samples/labels.csv --model-dir models/
 ```
 
-**Output (JSON):**
+Checks §0.5 success criteria: binary recall >= 0.85, binary precision >= 0.70, per-category F1 >= 0.70.
+
+### 4. Predict (Single Clip)
+
+```bash
+uv run python -m vidqc predict --input samples/text_001.mp4 --model-dir models/
+```
+
+Outputs JSON to stdout:
 ```json
 {
   "clip_id": "text_001.mp4",
@@ -110,30 +92,87 @@ uv run python -m vidqc.predict --video samples/text_001.mp4 --model models/model
     "TEMPORAL_FLICKER": 0.03
   },
   "evidence": {
-    "timestamps": [],
-    "bounding_boxes": [],
-    "frames": [],
     "notes": "Probabilities: NONE=0.050, TEXT_INCONSISTENCY=0.920, TEMPORAL_FLICKER=0.030"
   }
 }
 ```
 
-### 4. Batch Prediction
+### 5. Batch Predict
 
 ```bash
-# Batch prediction from CSV
-uv run python -m vidqc.predict --batch samples/labels.csv --output predictions.csv --model models/model.json
+uv run python -m vidqc batch --input samples/ --output predictions.jsonl --model-dir models/
 ```
 
-**Output CSV columns:**
-- `clip_path`, `artifact`, `category`, `confidence`
-- `prob_none`, `prob_text`, `prob_flicker`
+Processes all `.mp4` files in the directory, outputs one JSON per line to JSONL.
 
-### 5. Evaluate Model
+## CLI Reference
+
+```
+vidqc train
+    --config PATH          Config file (default: config.yaml)
+    --labels PATH          Labels CSV (default: samples/labels.csv)
+    --output-dir PATH      Where to save models (default: models/)
+    --cache / --no-cache   Cache extracted features (default: --cache)
+
+vidqc eval
+    --config PATH          Config file (default: config.yaml)
+    --labels PATH          Labels CSV (default: samples/labels.csv)
+    --model-dir PATH       Trained model directory (default: models/)
+
+vidqc predict
+    --input PATH           Single video file (required)
+    --model-dir PATH       Model directory (default: models/)
+    --config PATH          Config file (default: config.yaml)
+
+vidqc batch
+    --input PATH           Directory of .mp4 files (required)
+    --output PATH          Output JSONL path (default: predictions.jsonl)
+    --model-dir PATH       Model directory (default: models/)
+    --config PATH          Config file (default: config.yaml)
+```
+
+## Fetching Real AI Clips
+
+To generate real AI-generated clips for training/validation:
 
 ```bash
-# Evaluate on labeled dataset
-uv run python -m vidqc.eval --labels samples/labels.csv --model models/model.json
+# OpenAI Sora
+export OPENAI_API_KEY=sk-...
+uv run python tools/fetch_sora.py --prompts tools/prompts.txt --output samples/ --count 15
+
+# Google Veo-3
+export GOOGLE_API_KEY=...
+uv run python tools/fetch_veo3.py --prompts tools/prompts.txt --output samples/ --count 15
+```
+
+After fetching, label clips in `samples/labels.csv` and retrain.
+
+## Feature Distribution Comparison
+
+After adding real clips, compare feature distributions between synthetic and real data:
+
+```bash
+uv run python tools/compare_distributions.py \
+    --labels samples/labels.csv \
+    --output reports/distribution_comparison.json
+```
+
+## Docker
+
+### Build
+
+```bash
+docker build -t vidqc .
+```
+
+### Run
+
+```bash
+# Predict on a single clip
+docker run -v $(pwd)/samples:/data vidqc predict --input /data/text_001.mp4
+
+# Batch predict
+docker run -v $(pwd)/samples:/data vidqc batch --input /data --output /data/predictions.jsonl
 ```
 
 ## Feature Extraction
@@ -159,32 +198,27 @@ vidqc extracts **43 features** from each video clip:
 - Per-segment feature extraction
 - Worst-case segment reporting for multi-segment videos
 
+## Classifier Details
+
+### Decision Logic
+1. **Binary decision**: `artifact = P(NONE) < binary_threshold`
+2. **Category selection**: `argmax(P(TEXT), P(FLICKER))` when artifact detected
+3. **Hard constraint**: No text detected -> cannot predict TEXT_INCONSISTENCY
+4. **Threshold fallback**: If both `P(TEXT) <= 0.1` and `P(FLICKER) <= 0.1` -> NONE
+
+### Training Features
+- 5-fold stratified cross-validation (auto-adjusts for small datasets)
+- Feature caching with modification-time invalidation
+- Progress bars for real-time feedback
+- Deterministic training (seed=42)
+
 ## Development
 
 ### Run Tests
 
 ```bash
-# Full test suite
 uv run pytest -v
-
-# With coverage
-uv run pytest --cov=vidqc
-
-# Specific test file
-uv run pytest tests/test_text_features.py -v
 ```
-
-**Test coverage (50 tests):**
-- Schema validation (9 tests)
-- Frame extraction (7 tests)
-- Text feature extraction (3 tests)
-- Blur suppression (3 tests)
-- No-text gate (3 tests)
-- Temporal features (4 tests)
-- Scene cut handling (5 tests)
-- Scene cut with flicker (5 tests)
-- Category constraint (7 tests)
-- Determinism (5 tests)
 
 ### Lint
 
@@ -198,36 +232,73 @@ uv run ruff check vidqc/ tests/
 uv run mypy vidqc/
 ```
 
+### Full Development Workflow
+
+```bash
+# Setup
+uv sync
+uv sync --group dev --group dataset
+
+# Generate synthetic dataset
+uv run python tools/make_dataset.py --output samples/ --count 30
+
+# Train
+uv run python -m vidqc train
+
+# Evaluate
+uv run python -m vidqc eval
+
+# Predict
+uv run python -m vidqc predict --input samples/text_001.mp4
+
+# Batch
+uv run python -m vidqc batch --input samples/ --output predictions.jsonl
+
+# Run tests
+uv run pytest -v
+
+# Lint
+uv run ruff check vidqc/ tests/
+```
+
 ## Project Structure
 
 ```
 vidqc/
-├── vidqc/                      # Main package
-│   ├── features/               # Feature extraction modules
+├── vidqc/                          # Main package
+│   ├── features/                   # Feature extraction modules
 │   │   ├── text_inconsistency.py   # OCR-based text analysis
 │   │   ├── temporal_flicker.py     # Frame instability detection
 │   │   ├── scene_segmentation.py   # Scene cut detection
 │   │   ├── feature_manifest.py     # Feature name registry
 │   │   ├── extract.py              # Combined feature extraction
 │   │   └── common.py               # Shared utilities (SSIM, IoU, etc.)
-│   ├── models/                 # Classifier implementation
+│   ├── models/                     # Classifier implementation
 │   │   └── classifier.py           # XGBoost wrapper with constraints
-│   ├── utils/                  # Utilities
+│   ├── utils/                      # Utilities
 │   │   ├── video.py                # Frame extraction
 │   │   └── logging.py              # Logging configuration
-│   ├── train.py                # Training pipeline
-│   ├── predict.py              # Prediction interface
-│   ├── eval.py                 # Evaluation metrics
-│   ├── schemas.py              # Pydantic output schemas
-│   ├── config.py               # YAML configuration loader
-│   └── cli.py                  # CLI interface
-├── tools/                      # Dataset generation
-│   └── make_dataset.py             # Synthetic clip generator
-├── samples/                    # Video clips + labels.csv
-├── models/                     # Trained models (after training)
-├── tests/                      # Test suite (50 tests)
-├── config.yaml                 # Configuration
-└── pyproject.toml              # Dependencies
+│   ├── train.py                    # Training pipeline
+│   ├── predict.py                  # Prediction interface
+│   ├── eval.py                     # Evaluation & success criteria
+│   ├── schemas.py                  # Pydantic output schemas
+│   ├── config.py                   # YAML configuration loader
+│   ├── cli.py                      # CLI interface (4 commands)
+│   └── __main__.py                 # Entry point
+├── tools/                          # Dataset & analysis tools
+│   ├── make_dataset.py             # Synthetic clip generator
+│   ├── fetch_sora.py               # OpenAI Sora API client
+│   ├── fetch_veo3.py               # Google Veo-3 API client
+│   ├── compare_distributions.py    # Synthetic vs. real comparison
+│   └── prompts.txt                 # Curated generation prompts
+├── samples/                        # Video clips + labels.csv
+├── models/                         # Trained models (after training)
+├── tests/                          # Test suite (50 tests)
+├── config.yaml                     # Configuration
+├── Dockerfile                      # Multi-stage Docker build
+├── SPEC.md                         # Technical specification
+├── PRODUCTION_PLAN.md              # AWS deployment plan
+└── pyproject.toml                  # Dependencies
 ```
 
 ## Configuration
@@ -235,67 +306,39 @@ vidqc/
 Key settings in `config.yaml`:
 
 ```yaml
-# Frame extraction
 video:
-  fps: 5                    # Frames per second to sample
-  max_dimension: 720        # Downscale to 720p
+  sample_fps: 5              # Frames per second to sample
+  max_resolution: 720        # Downscale to 720p
 
-# Text analysis
 text:
   ocr_skip_ssim_threshold: 0.995  # Skip OCR if frame similarity > threshold
   edit_distance_threshold: 2       # Min edit distance for artifact
   bbox_iou_threshold: 0.3          # Min IoU for region matching
 
-# Temporal analysis
 temporal:
-  scene_cut_ssim_threshold: 0.4    # SSIM below this = scene cut
-  post_cut_stability_window: 3     # Frames to verify stability after cut
+  scene_cut:
+    cut_ssim_threshold: 0.4        # SSIM below this = scene cut
+    post_cut_stability_window: 3   # Frames to verify stability after cut
 
-# Classifier
-classifier:
+model:
   binary_threshold: 0.5            # P(NONE) < threshold = artifact
   seed: 42                         # For reproducibility
 ```
 
-## Classifier Details
+## Performance
 
-### Decision Logic
-1. **Binary decision**: `artifact = P(NONE) < binary_threshold`
-2. **Category selection**: `argmax(P(TEXT), P(FLICKER))` when artifact detected
-3. **Hard constraint**: No text detected → cannot predict TEXT_INCONSISTENCY
-4. **Threshold fallback**: If both `P(TEXT) ≤ 0.1` and `P(FLICKER) ≤ 0.1` → NONE
-
-### Training Features
-- 5-fold stratified cross-validation (auto-adjusts for small datasets)
-- Feature caching with modification-time invalidation
-- Progress bars for real-time feedback
-- Deterministic training (seed=42)
+- **Training time**: ~1-2 minutes per clip (OCR-bound)
+- **Prediction time**: ~75-140 seconds per clip on CPU (EasyOCR is the bottleneck; text-heavy clips ~136s, flicker-only ~90s, clean ~75s)
+- **Cache speedup**: 106x faster on repeated training runs
+- **Model size**: ~100KB (XGBoost JSON)
+- **Target latency**: < 60s per clip (aspirational — requires GPU or OCR optimization)
 
 ## Documentation
 
 - **SPEC.md**: Full technical specification
 - **CLAUDE.md**: Agent implementation instructions
 - **PROGRESS.md**: Current milestone status
-
-## Status
-
-**Completed Milestones:**
-- [x] Milestone 1: Scaffolding & Synthetic Data
-- [x] Milestone 2: Frame Extraction & Core Utilities
-- [x] Milestone 3: Text Feature Extraction
-- [x] Milestone 4: Temporal Feature Extraction
-- [x] Milestone 5: Classifier & Training Pipeline
-
-**Current**: Milestone 6 - Real Data & Validation
-
-See PROGRESS.md for details.
-
-## Performance
-
-- **Training time**: ~1-2 minutes per clip (OCR-bound)
-- **Prediction time**: ~30-60 seconds per clip
-- **Cache speedup**: 106x faster on repeated training runs
-- **Model size**: ~100KB (XGBoost JSON)
+- **PRODUCTION_PLAN.md**: AWS deployment architecture
 
 ## License
 

@@ -24,7 +24,6 @@ from vidqc.config import get_config
 from vidqc.features.extract import extract_all_features
 from vidqc.features.feature_manifest import COMBINED_FEATURE_NAMES
 from vidqc.models.classifier import VidQCClassifier
-from vidqc.schemas import ArtifactCategory
 from vidqc.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -234,8 +233,8 @@ def train_model(
         for fold, (train_idx, val_idx) in enumerate(
             tqdm(skf.split(features, labels), total=n_splits, desc="Cross-validation", unit="fold")
         ):
-            X_train, X_val = features[train_idx], features[val_idx]
-            y_train, y_val = labels[train_idx], labels[val_idx]
+            X_train, _ = features[train_idx], features[val_idx]
+            y_train, _ = labels[train_idx], labels[val_idx]
 
             # Train classifier
             classifier = VidQCClassifier(config)
@@ -342,7 +341,7 @@ if __name__ == "__main__":
             config,
             args.cache,
         )
-        print(f"\nTraining complete!")
+        print("\nTraining complete!")
         print(f"Model: {manifest['model_path']}")
         print(f"CV F1: {manifest['cv_mean_f1']:.3f} ± {manifest['cv_std_f1']:.3f}")
     except Exception as e:
