@@ -18,6 +18,7 @@ import Levenshtein
 import cv2
 import easyocr
 import numpy as np
+from tqdm import tqdm
 
 from vidqc.config import get_config
 from vidqc.features.common import (
@@ -170,7 +171,7 @@ def _run_ocr_with_skip(
     results.append(_parse_ocr_result(ocr_output, 0, timestamps[0]))
 
     # For subsequent frames, check SSIM before OCR
-    for i in range(1, len(frames)):
+    for i in tqdm(range(1, len(frames)), desc="  OCR frames", unit="frame", leave=False):
         frame_ssim = compute_ssim(frames[i - 1], frames[i])
 
         if frame_ssim > threshold:
