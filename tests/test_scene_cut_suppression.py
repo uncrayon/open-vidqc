@@ -218,7 +218,7 @@ def test_multi_segment_analysis():
         video_path = str(Path(tmpdir) / "two_segments.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_temporal_features(video_path)
+        features, _ = extract_temporal_features(video_path)
 
         # Both segments are stable, so overall should show high SSIM
         # (within each segment, frames are identical)

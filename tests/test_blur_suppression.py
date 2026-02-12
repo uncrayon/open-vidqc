@@ -104,7 +104,7 @@ def test_blur_sequence_low_substitution_ratio():
         video_path = str(Path(tmpdir) / "blur_sequence.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_text_features(video_path)
+        features, _ = extract_text_features(video_path)
 
         # Blur should have:
         # - Low substitution ratio (deletions, not swaps)
@@ -152,7 +152,7 @@ def test_artifact_sequence_high_substitution_ratio():
         video_path = str(Path(tmpdir) / "artifact_sequence.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_text_features(video_path)
+        features, _ = extract_text_features(video_path)
 
         # Artifacts should have:
         # - High substitution ratio (character swaps)
@@ -187,7 +187,7 @@ def test_no_false_positive_on_stable_blur():
         video_path = str(Path(tmpdir) / "stable_blur.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_text_features(video_path)
+        features, _ = extract_text_features(video_path)
 
         # OCR may struggle with blurred text, but since it's stable,
         # edit distance should be low

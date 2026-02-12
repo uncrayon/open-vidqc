@@ -61,7 +61,7 @@ def test_stable_video_high_ssim():
         video_path = str(Path(tmpdir) / "stable.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_temporal_features(video_path)
+        features, evidence = extract_temporal_features(video_path)
 
         # Stable video should have high SSIM
         assert features["ssim_mean"] > 0.99
@@ -82,6 +82,9 @@ def test_stable_video_high_ssim():
             assert not np.isnan(value), f"Feature {name} is NaN"
             assert not np.isinf(value), f"Feature {name} is Inf"
 
+        # Evidence should be None for stable video
+        assert evidence is None, "Evidence should be None for stable video"
+
 
 def test_flickering_video_low_ssim():
     """Test that flickering video has low SSIM."""
@@ -97,7 +100,7 @@ def test_flickering_video_low_ssim():
         video_path = str(Path(tmpdir) / "flicker.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_temporal_features(video_path)
+        features, _ = extract_temporal_features(video_path)
 
         # Flickering video should have lower SSIM
         assert features["ssim_min"] < 0.99
@@ -120,7 +123,7 @@ def test_feature_vector_length():
         video_path = str(Path(tmpdir) / "length_test.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_temporal_features(video_path)
+        features, _ = extract_temporal_features(video_path)
 
         # Check length
         assert len(features) == 14
@@ -143,7 +146,7 @@ def test_gradient_change_detected():
         video_path = str(Path(tmpdir) / "gradient.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_temporal_features(video_path)
+        features, _ = extract_temporal_features(video_path)
 
         # Gradual change should have:
         # - Relatively high SSIM (changes are smooth, not abrupt)

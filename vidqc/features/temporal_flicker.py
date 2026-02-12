@@ -18,7 +18,8 @@ from vidqc.features.feature_manifest import (
     get_zero_temporal_features,
     validate_temporal_features,
 )
-from vidqc.features.scene_segmentation import Segment, detect_scene_cuts, segment_by_cuts
+from vidqc.features.scene_segmentation import SceneCut, Segment, detect_scene_cuts, segment_by_cuts
+from vidqc.schemas import Evidence
 from vidqc.utils.logging import get_logger
 from vidqc.utils.video import extract_frames
 
@@ -382,17 +383,114 @@ def aggregate_multi_segment_features(
     return worst_segment
 
 
-def extract_temporal_features(video_path: str, config: Optional[dict] = None) -> dict[str, float]:
+def _collect_temporal_evidence(
+    frames: list[np.ndarray],
+    timestamps: list[float],
+    segments: list[Segment],
+    cuts: list[SceneCut],
+    config: dict,
+) -> Optional[Evidence]:
+    """Collect evidence for TEMPORAL_FLICKER artifact (Step 6 equivalent).
+
+    Identifies frame pairs with SSIM below spike threshold within segments,
+    excluding cut-point frames. For each unstable pair, finds the worst patch
+    (4x4 grid) and converts to bounding box.
+
+    Args:
+        frames: List of all frames
+        timestamps: List of timestamps (seconds), one per frame
+        segments: List of segments from scene segmentation
+        cuts: List of detected scene cuts
+        config: Configuration dict
+
+    Returns:
+        Evidence object if flicker detected, None otherwise
+    """
+    ssim_threshold = config["temporal"]["ssim_spike_threshold"]
+    patch_grid = config["temporal"]["patch_grid"]
+    cut_indices = {c.frame_index for c in cuts}
+
+    evidence_frame_indices: list[int] = []
+    evidence_bboxes: list[list[int]] = []
+    evidence_notes: list[str] = []
+
+    for segment in segments:
+        seg_frames = list(range(segment.start_frame, segment.end_frame + 1))
+
+        for k in range(len(seg_frames) - 1):
+            idx_a = seg_frames[k]
+            idx_b = seg_frames[k + 1]
+
+            # Exclude cut-point frames
+            if idx_a in cut_indices or idx_b in cut_indices:
+                continue
+
+            frame_a = frames[idx_a]
+            frame_b = frames[idx_b]
+            pair_ssim = compute_ssim(frame_a, frame_b)
+
+            if pair_ssim < ssim_threshold:
+                evidence_frame_indices.append(idx_a)
+                evidence_frame_indices.append(idx_b)
+
+                # Find worst patch (lowest SSIM) in 4x4 grid
+                rows, cols = patch_grid
+                h, w = frame_a.shape[:2]
+                patch_h = h // rows
+                patch_w = w // cols
+
+                worst_ssim = 1.0
+                worst_bbox: list[int] = [0, 0, w, h]
+
+                for pi in range(rows):
+                    for pj in range(cols):
+                        y1 = pi * patch_h
+                        y2 = (pi + 1) * patch_h if pi < rows - 1 else h
+                        x1 = pj * patch_w
+                        x2 = (pj + 1) * patch_w if pj < cols - 1 else w
+
+                        patch_a = frame_a[y1:y2, x1:x2]
+                        patch_b = frame_b[y1:y2, x1:x2]
+                        ps = compute_ssim(patch_a, patch_b)
+
+                        if ps < worst_ssim:
+                            worst_ssim = ps
+                            worst_bbox = [x1, y1, x2, y2]
+
+                evidence_bboxes.append(worst_bbox)
+                evidence_notes.append(
+                    f"Frames {idx_a}-{idx_b}: SSIM={pair_ssim:.3f}, "
+                    f"worst patch SSIM={worst_ssim:.3f}"
+                )
+
+    if len(evidence_frame_indices) > 0:
+        unique_indices = sorted(set(evidence_frame_indices))
+        unique_timestamps = [timestamps[i] for i in unique_indices if i < len(timestamps)]
+
+        return Evidence(
+            timestamps=unique_timestamps,
+            bounding_boxes=evidence_bboxes,
+            frames=unique_indices,
+            notes=" | ".join(evidence_notes),
+        )
+
+    return None
+
+
+def extract_temporal_features(
+    video_path: str, config: Optional[dict] = None
+) -> tuple[dict[str, float], Optional[Evidence]]:
     """Extract TEMPORAL_FLICKER features from video.
 
-    Returns a 14-feature vector. If video has no valid segments, returns all zeros.
+    Returns a 14-feature vector and optional evidence. If video has no valid
+    segments, returns all zeros and None evidence.
 
     Args:
         video_path: Path to video file
         config: Optional config dict (uses default if None)
 
     Returns:
-        Dict mapping feature names to values (14 features)
+        Tuple of (features dict with 14 features, Evidence or None)
 
     Raises:
         FileNotFoundError: If video file does not exist
@@ -425,10 +523,11 @@ def extract_temporal_features(video_path: str, config: Optional[dict] = None) ->
             "post_spike_stability": 1.0,
             "spike_isolation_ratio": 1.0,
         })
-        return zero_feats
+        return zero_feats, None
 
     # Extract frame data
     frames = [f.data for f in frame_list]
+    timestamps = [f.timestamp for f in frame_list]
 
     # Detect scene cuts
     cuts = detect_scene_cuts(frames, config)
@@ -447,7 +546,7 @@ def extract_temporal_features(video_path: str, config: Optional[dict] = None) ->
             "post_spike_stability": 1.0,
             "spike_isolation_ratio": 1.0,
         })
-        return zero_feats
+        return zero_feats, None
 
     logger.debug(f"Analyzing {len(segments)} segments for temporal flicker")
 
@@ -460,8 +559,13 @@ def extract_temporal_features(video_path: str, config: Optional[dict] = None) ->
     # Aggregate across segments (report worst case)
     features = aggregate_multi_segment_features(segment_features, config)
 
+    # Collect evidence
+    evidence = _collect_temporal_evidence(frames, timestamps, segments, cuts, config)
+    if evidence:
+        logger.info(f"TEMPORAL_FLICKER evidence: {evidence.notes}")
+
     # Validate
     validate_temporal_features(features)
 
     logger.info(f"Extracted {len(features)} temporal features")
-    return features
+    return features, evidence

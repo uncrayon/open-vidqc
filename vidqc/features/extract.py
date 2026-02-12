@@ -60,7 +60,7 @@ def extract_all_features(
 
     # Extract text features
     try:
-        text_feats = extract_text_features(video_path, config)
+        text_feats, text_evidence = extract_text_features(video_path, config)
     except Exception as e:
         logger.error(f"Text feature extraction failed: {e}")
         # Re-raise critical errors
@@ -70,7 +70,7 @@ def extract_all_features(
 
     # Extract temporal features
     try:
-        temporal_feats = extract_temporal_features(video_path, config)
+        temporal_feats, temporal_evidence = extract_temporal_features(video_path, config)
     except Exception as e:
         logger.error(f"Temporal feature extraction failed: {e}")
         # Re-raise critical errors
@@ -92,11 +92,9 @@ def extract_all_features(
     features = np.array([combined_dict[name] for name in COMBINED_FEATURE_NAMES])
 
     # Build evidence dict
-    # Note: Evidence data is currently logged but not returned by extractors.
-    # For now, we return None for both until we refactor extractors to return evidence.
     evidence = {
-        "text_evidence": None,  # TODO: Modify text extractor to return evidence
-        "temporal_evidence": None,  # TODO: Modify temporal extractor to return evidence
+        "text_evidence": text_evidence,
+        "temporal_evidence": temporal_evidence,
         "feature_names": COMBINED_FEATURE_NAMES,
         "error": None,
     }

@@ -56,26 +56,18 @@ def predict_clip(
     has_text = features[0] > 0  # has_text_regions feature (index 0)
     result = classifier.predict(features, has_text)
 
-    # Build Evidence object
-    evidence_notes = []
-
-    # Text evidence
-    # Note: Currently text/temporal extractors don't return evidence data
-    # For now, we log probabilities as diagnostic info
-    # TODO: Update extractors to return evidence data
-
-    # Temporal evidence
-    # TODO: Collect from evidence_data when extractors are updated
+    # Build diagnostic notes
+    diagnostic_notes = []
 
     # Log probabilities for diagnostics
     prob_str = ", ".join(
         [f"{k}={v:.3f}" for k, v in result.probabilities.items()]
     )
-    evidence_notes.append(f"Probabilities: {prob_str}")
+    diagnostic_notes.append(f"Probabilities: {prob_str}")
 
     # Log override if applied
     if result.override_applied and result.override_reason:
-        evidence_notes.append(result.override_reason)
+        diagnostic_notes.append(result.override_reason)
 
     # Secondary signal check (§6.9)
     # Detect if both text and temporal artifacts present
@@ -84,20 +76,46 @@ def predict_clip(
 
     # Both probabilities significant (>0.2) indicates potential secondary signal
     if text_prob > 0.2 and flicker_prob > 0.2:
-        evidence_notes.append(
+        diagnostic_notes.append(
             f"SECONDARY_SIGNAL: Both text ({text_prob:.3f}) and "
             f"temporal ({flicker_prob:.3f}) artifacts detected"
         )
 
     # Build Evidence object (enforce contract: artifact=False requires evidence=None)
     if result.artifact_detected:
-        # When artifact detected, provide evidence (even if minimal)
-        evidence = Evidence(
-            timestamps=[],  # TODO: Populate from extractors
-            bounding_boxes=[],  # TODO: Populate from text extractor
-            frames=[],  # TODO: Populate from extractors
-            notes="\n".join(evidence_notes),
-        )
+        # Select evidence based on predicted category
+        text_evidence = evidence_data.get("text_evidence")
+        temporal_evidence = evidence_data.get("temporal_evidence")
+
+        extractor_evidence: Evidence | None = None
+        if result.predicted_class == "TEXT_INCONSISTENCY":
+            extractor_evidence = text_evidence
+        elif result.predicted_class == "TEMPORAL_FLICKER":
+            extractor_evidence = temporal_evidence
+
+        if extractor_evidence is not None:
+            # Merge extractor evidence with diagnostic notes
+            combined_notes = extractor_evidence.notes
+            if diagnostic_notes:
+                combined_notes += "\n" + "\n".join(diagnostic_notes)
+            evidence = Evidence(
+                timestamps=extractor_evidence.timestamps,
+                bounding_boxes=extractor_evidence.bounding_boxes,
+                frames=extractor_evidence.frames,
+                notes=combined_notes,
+            )
+        else:
+            # Artifact detected but no evidence frames collected
+            logger.warning(
+                f"Artifact detected ({result.predicted_class}) but no evidence "
+                f"frames collected from extractor"
+            )
+            evidence = Evidence(
+                timestamps=[],
+                bounding_boxes=[],
+                frames=[],
+                notes="\n".join(diagnostic_notes),
+            )
     else:
         # When no artifact, evidence MUST be None
         evidence = None

@@ -26,7 +26,7 @@ def main():
         print(f'Processing {idx+1}/{len(labels)}: {row["clip_id"]} ({row["artifact_category"]})...')
 
         try:
-            features = extract_text_features(clip_path)
+            features, _ = extract_text_features(clip_path)
 
             # Check for NaN/Inf
             has_nan = any(np.isnan(v) for v in features.values())

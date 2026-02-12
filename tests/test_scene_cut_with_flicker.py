@@ -82,7 +82,7 @@ def test_flicker_in_first_segment():
         video_path = str(Path(tmpdir) / "flicker_first_segment.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_temporal_features(video_path)
+        features, _ = extract_temporal_features(video_path)
 
         # Should detect flicker in first segment (worst case)
         # Even though second segment is stable, we report worst-case
@@ -110,7 +110,7 @@ def test_flicker_in_second_segment():
         video_path = str(Path(tmpdir) / "flicker_second_segment.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_temporal_features(video_path)
+        features, _ = extract_temporal_features(video_path)
 
         # Should detect flicker in second segment (worst case)
         assert features["ssim_min"] < 0.99, "Should detect low SSIM in flickering segment"
@@ -141,7 +141,7 @@ def test_no_false_positive_across_cut():
         video_path = str(Path(tmpdir) / "clean_cut.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_temporal_features(video_path)
+        features, _ = extract_temporal_features(video_path)
 
         # Both segments are stable, so should NOT detect flicker
         # The scene cut itself should be excluded
@@ -173,7 +173,7 @@ def test_worst_case_segment_reported():
         video_path = str(Path(tmpdir) / "worst_case.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_temporal_features(video_path)
+        features, _ = extract_temporal_features(video_path)
 
         # Should report features from segment 2 (worse flicker)
         # Segment 2 has much larger color difference, so MAE should be high
@@ -208,7 +208,7 @@ def test_multiple_cuts_multiple_segments():
         video_path = str(Path(tmpdir) / "three_segments.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_temporal_features(video_path)
+        features, _ = extract_temporal_features(video_path)
 
         # Should detect flicker in segment 2 (worst case)
         assert features["ssim_min"] < 0.99, "Should detect flicker in middle segment"

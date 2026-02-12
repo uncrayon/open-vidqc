@@ -66,7 +66,7 @@ def test_no_text_returns_zeros():
         video_path = str(Path(tmpdir) / "no_text.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_text_features(video_path)
+        features, _ = extract_text_features(video_path)
 
         # Check has_text_regions is 0
         assert features["has_text_regions"] == 0.0
@@ -87,7 +87,7 @@ def test_no_text_vector_length():
         video_path = str(Path(tmpdir) / "no_text_length.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_text_features(video_path)
+        features, _ = extract_text_features(video_path)
 
         # Check length
         assert len(features) == 29
@@ -124,8 +124,8 @@ def test_text_vs_no_text_same_length():
         create_test_video(notext_frames, notext_path)
         create_test_video(text_frames, text_path)
 
-        notext_features = extract_text_features(notext_path)
-        text_features = extract_text_features(text_path)
+        notext_features, _ = extract_text_features(notext_path)
+        text_features, _ = extract_text_features(text_path)
 
         # Both should have same length
         assert len(notext_features) == len(text_features) == 29

@@ -601,17 +601,20 @@ def _collect_evidence(
     return None
 
 
-def extract_text_features(video_path: str, config: Optional[dict] = None) -> dict[str, float]:
+def extract_text_features(
+    video_path: str, config: Optional[dict] = None
+) -> tuple[dict[str, float], Optional[Evidence]]:
     """Extract TEXT_INCONSISTENCY features from video (Steps 0-6).
 
-    Returns a 29-feature vector. If no text is detected, returns all zeros.
+    Returns a 29-feature vector and optional evidence. If no text is detected,
+    returns all zeros and None evidence.
 
     Args:
         video_path: Path to video file
         config: Optional config dict (uses default if None)
 
     Returns:
-        Dict mapping feature names to values (29 features)
+        Tuple of (features dict with 29 features, Evidence or None)
 
     Raises:
         FileNotFoundError: If video file does not exist
@@ -635,7 +638,7 @@ def extract_text_features(video_path: str, config: Optional[dict] = None) -> dic
 
     if len(frame_list) == 0:
         logger.warning("No frames extracted, returning zero features")
-        return get_zero_features()
+        return get_zero_features(), None
 
     # Extract frame data and timestamps
     frames = [f.data for f in frame_list]
@@ -651,7 +654,7 @@ def extract_text_features(video_path: str, config: Optional[dict] = None) -> dic
 
     if total_text_regions == 0:
         logger.info("No text detected in video, returning zero features")
-        return get_zero_features()
+        return get_zero_features(), None
 
     logger.debug(
         f"Text detected: {frames_with_text}/{len(ocr_results)} frames, "
@@ -670,7 +673,7 @@ def extract_text_features(video_path: str, config: Optional[dict] = None) -> dic
 
     if len(all_matched_pairs) == 0:
         logger.info("No matched text regions across frames, returning zero features")
-        return get_zero_features()
+        return get_zero_features(), None
 
     # Step 3: Compute per-region features
     per_region_feats = _compute_per_region_features(all_matched_pairs, frames)
@@ -683,7 +686,7 @@ def extract_text_features(video_path: str, config: Optional[dict] = None) -> dic
         per_region_feats, fp_feats, True, frames_with_text_ratio, total_text_regions
     )
 
-    # Step 6: Collect evidence (not returned in feature dict, but logged)
+    # Step 6: Collect evidence
     evidence = _collect_evidence(all_matched_pairs, frames, timestamps, per_region_feats, config)
     if evidence:
         logger.info(f"TEXT_INCONSISTENCY evidence: {evidence.notes}")
@@ -694,4 +697,4 @@ def extract_text_features(video_path: str, config: Optional[dict] = None) -> dic
     validate_features(features)
 
     logger.info(f"Extracted {len(features)} text features")
-    return features
+    return features, evidence

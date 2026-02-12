@@ -77,23 +77,23 @@ def test_text_mutation_detected():
     for _ in range(5):
         frames.append(create_text_frame("HELLO WORLD", (200, 300)))
 
-    # Frame 5-9: "HE1LO WQRLD" (2 character mutations)
+    # Frame 5-9: "H31LO WQRLD" (3 character mutations, exceeds edit_distance_threshold=2)
     for _ in range(5):
-        frames.append(create_text_frame("HE1LO WQRLD", (205, 303)))  # Slight bbox shift
+        frames.append(create_text_frame("H31LO WQRLD", (205, 303)))  # Slight bbox shift
 
     with tempfile.TemporaryDirectory() as tmpdir:
         video_path = str(Path(tmpdir) / "text_mutation.mp4")
         create_test_video(frames, video_path)
 
         # Extract features
-        features = extract_text_features(video_path)
+        features, evidence = extract_text_features(video_path)
 
         # Assertions
         assert features["has_text_regions"] == 1.0
         assert features["frames_with_text_ratio"] > 0.8  # Most frames have text
 
         # Text mutation should produce high edit distance
-        assert features["edit_distance_max"] >= 2.0  # At least 2 character changes
+        assert features["edit_distance_max"] >= 3.0  # At least 3 character changes
 
         # Substitution ratio should be high (character swaps, not deletions)
         assert features["substitution_ratio_max"] > 0.5
@@ -109,6 +109,12 @@ def test_text_mutation_detected():
             assert not np.isnan(value), f"Feature {name} is NaN"
             assert not np.isinf(value), f"Feature {name} is Inf"
 
+        # Evidence should be collected for text mutations
+        assert evidence is not None, "Evidence should not be None for text mutations"
+        assert len(evidence.frames) > 0, "Evidence should have frame indices"
+        assert len(evidence.timestamps) > 0, "Evidence should have timestamps"
+        assert len(evidence.bounding_boxes) > 0, "Evidence should have bounding boxes"
+
 
 def test_stable_text_low_features():
     """Test that stable text produces low feature values."""
@@ -122,7 +128,7 @@ def test_stable_text_low_features():
         create_test_video(frames, video_path)
 
         # Extract features
-        features = extract_text_features(video_path)
+        features, _ = extract_text_features(video_path)
 
         # Assertions
         assert features["has_text_regions"] == 1.0
@@ -146,7 +152,7 @@ def test_feature_vector_length():
         video_path = str(Path(tmpdir) / "length_test.mp4")
         create_test_video(frames, video_path)
 
-        features = extract_text_features(video_path)
+        features, _ = extract_text_features(video_path)
 
         # Check length
         assert len(features) == 29
