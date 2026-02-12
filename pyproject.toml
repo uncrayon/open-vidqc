@@ -25,6 +25,7 @@ vidqc = "vidqc.__main__:main"
 [dependency-groups]
 dev = ["pytest>=8.0", "ruff>=0.3", "mypy>=1.8"]
 dataset = ["openai>=1.12", "google-genai>=1.0", "requests>=2.31"]
+notebook = ["jupyter>=1.0", "matplotlib>=3.8", "seaborn>=0.13"]
 
 [tool.ruff]
 line-length = 100
