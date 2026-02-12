@@ -75,10 +75,15 @@ Checks §0.5 success criteria: binary recall >= 0.85, binary precision >= 0.70, 
 
 ### 4. Predict (Single Clip)
 
-```bash
-uv run python -m vidqc predict --input samples/text_001.mp4 --model-dir models/
-```
+Any resolution MP4 is accepted as input. Videos taller than 720p are automatically downscaled (preserving aspect ratio) before processing. Videos at 720p or below are used as-is. The downscale target is configurable via `video.max_resolution` in `config.yaml`.
 
+```bash
+uv run python -m vidqc predict --input /path/to/your/video.mp4
+```
+This last assumes a trained model exists at `models/model.json` (which is the default). If the model is elsewhere then:
+```
+uv run python -m vidqc predict --input /path/to/your/video.mp4 --model-dir /path/to/models/
+```
 Outputs JSON to stdout:
 ```json
 {
