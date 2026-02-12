@@ -71,6 +71,21 @@ def validate_config(config: dict) -> None:
                 raise ValueError(
                     "Config validation failed: text.ocr_languages must be a non-empty list"
                 )
+        if "ocr_gpu" in text:
+            raw = text["ocr_gpu"]
+            if isinstance(raw, bool):
+                pass  # True / False are always valid
+            elif isinstance(raw, str):
+                if raw.lower().strip() not in {"auto", "true", "false"}:
+                    raise ValueError(
+                        f"Config validation failed: text.ocr_gpu must be one of "
+                        f"true, false, or 'auto' (got {raw!r})"
+                    )
+            else:
+                raise ValueError(
+                    f"Config validation failed: text.ocr_gpu must be one of "
+                    f"true, false, or 'auto' (got {raw!r})"
+                )
         if "ocr_skip_ssim_threshold" in text:
             threshold = text["ocr_skip_ssim_threshold"]
             if not (0.0 <= threshold <= 1.0):
