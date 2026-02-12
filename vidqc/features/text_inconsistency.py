@@ -548,6 +548,8 @@ def _collect_evidence(
     """Collect evidence for TEXT_INCONSISTENCY artifact (Step 6).
 
     Criteria: edit_distance > threshold AND global_ssim > scene_stability_threshold
+    Fallback: If strict criteria collect no hits, use top unstable text pairs
+    to keep evidence actionable for positive predictions.
 
     Args:
         matched_pairs: List of matched region pairs
@@ -561,19 +563,25 @@ def _collect_evidence(
     """
     edit_threshold = config["text"]["edit_distance_threshold"]
     ssim_floor = config["text"]["fp_suppression"]["global_ssim_floor"]
+    confidence_threshold = config["text"].get("confidence_drop_threshold", 0.3)
+    bbox_shift_threshold = 10.0
+    max_fallback_pairs = 3
 
     evidence_frame_indices = []
     evidence_bboxes = []
     evidence_notes = []
+    fallback_candidates = []
 
     for i, pair in enumerate(matched_pairs):
         edit_dist = per_region_feats["edit_distance"][i]
-        if edit_dist > edit_threshold:
-            # Check global SSIM
-            frame_a = frames[pair.region_a.frame_index]
-            frame_b = frames[pair.region_b.frame_index]
-            global_ssim = compute_ssim(frame_a, frame_b)
+        conf_delta = per_region_feats["confidence_delta"][i]
+        bbox_shift = per_region_feats["bbox_shift"][i]
 
+        frame_a = frames[pair.region_a.frame_index]
+        frame_b = frames[pair.region_b.frame_index]
+        global_ssim = compute_ssim(frame_a, frame_b)
+
+        if edit_dist > edit_threshold:
             if global_ssim > ssim_floor:
                 # Artifact detected
                 evidence_frame_indices.append(pair.region_a.frame_index)
@@ -585,6 +593,31 @@ def _collect_evidence(
                     f"Text '{pair.region_a.text}' → '{pair.region_b.text}' "
                     f"(edit_dist={edit_dist:.1f}, global_ssim={global_ssim:.3f})"
                 )
+                continue
+
+        text_changed = pair.region_a.text != pair.region_b.text
+        if (
+            text_changed
+            or conf_delta >= confidence_threshold
+            or bbox_shift >= bbox_shift_threshold
+        ):
+            # Keep a few high-signal candidates as fallback evidence when strict
+            # thresholds miss but classifier still predicts TEXT_INCONSISTENCY.
+            score = (
+                (edit_dist * 10.0)
+                + (conf_delta * 2.0)
+                + min(bbox_shift, 50.0) / 10.0
+            )
+            fallback_candidates.append(
+                (
+                    score,
+                    i,
+                    global_ssim,
+                    edit_dist,
+                    conf_delta,
+                    bbox_shift,
+                )
+            )
 
     if len(evidence_frame_indices) > 0:
         # Deduplicate and sort
@@ -594,6 +627,30 @@ def _collect_evidence(
         return Evidence(
             timestamps=unique_timestamps,
             bounding_boxes=evidence_bboxes,  # Keep all bboxes, not just unique
+            frames=unique_indices,
+            notes=" | ".join(evidence_notes),
+        )
+
+    if len(fallback_candidates) > 0:
+        fallback_candidates.sort(key=lambda x: x[0], reverse=True)
+        for _, i, global_ssim, edit_dist, conf_delta, bbox_shift in fallback_candidates[:max_fallback_pairs]:
+            pair = matched_pairs[i]
+            evidence_frame_indices.append(pair.region_a.frame_index)
+            evidence_frame_indices.append(pair.region_b.frame_index)
+            evidence_bboxes.append(pair.region_a.bbox)
+            evidence_bboxes.append(pair.region_b.bbox)
+            evidence_notes.append(
+                f"RELAXED_EVIDENCE Frames {pair.region_a.frame_index}-{pair.region_b.frame_index}: "
+                f"Text '{pair.region_a.text}' → '{pair.region_b.text}' "
+                f"(edit_dist={edit_dist:.1f}, conf_delta={conf_delta:.3f}, "
+                f"bbox_shift={bbox_shift:.1f}, global_ssim={global_ssim:.3f})"
+            )
+
+        unique_indices = sorted(set(evidence_frame_indices))
+        unique_timestamps = [timestamps[i] for i in unique_indices]
+        return Evidence(
+            timestamps=unique_timestamps,
+            bounding_boxes=evidence_bboxes,
             frames=unique_indices,
             notes=" | ".join(evidence_notes),
         )

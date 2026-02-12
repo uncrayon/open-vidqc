@@ -48,10 +48,11 @@ uv run python -m vidqc --help
 ### 1. Generate Synthetic Dataset
 
 ```bash
-uv run python tools/make_dataset.py --output samples/ --count 30
+uv run python tools/make_dataset.py --output samples/ --count 30 --seed 42
 ```
 
 This creates 30 video clips across 6 types with ground truth labels in `samples/labels.csv`.
+> Notice that `--seed` is optional.
 
 ### 2. Train
 
@@ -81,7 +82,7 @@ Any resolution MP4 is accepted as input. Videos taller than 720p are automatical
 uv run python -m vidqc predict --input /path/to/your/video.mp4
 ```
 This last assumes a trained model exists at `models/model.json` (which is the default). If the model is elsewhere then:
-```
+```bash
 uv run python -m vidqc predict --input /path/to/your/video.mp4 --model-dir /path/to/models/
 ```
 Outputs JSON to stdout:
@@ -101,6 +102,20 @@ Outputs JSON to stdout:
   }
 }
 ```
+#### 4.1. Interactive BBox Review
+
+Generate a self-contained HTML report for human QA of predicted evidence and OCR boxes:
+
+```bash
+uv run python tools/review_bboxes.py --input path/to/your/video --output path/to/output/report.html --model-dir path/to/models/ --config path/to/config.yaml
+```
+> Note: `--output`, `--model-dir` and `--config` are optional if you want to use the default paths.
+
+This creates `reports/bbox_review_<clip>.html` with:
+- frame-by-frame navigation
+- evidence bbox overlays
+- optional OCR bbox overlays
+- prediction summary and raw JSON
 
 ### 5. Batch Predict
 

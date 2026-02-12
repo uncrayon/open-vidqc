@@ -396,6 +396,10 @@ def _collect_temporal_evidence(
     excluding cut-point frames. For each unstable pair, finds the worst patch
     (4x4 grid) and converts to bounding box.
 
+    If strict SSIM spike filtering yields no evidence, falls back to a relaxed
+    ranking of top unstable pairs so positive temporal predictions still return
+    actionable review frames.
+
     Args:
         frames: List of all frames
         timestamps: List of timestamps (seconds), one per frame
@@ -408,11 +412,19 @@ def _collect_temporal_evidence(
     """
     ssim_threshold = config["temporal"]["ssim_spike_threshold"]
     patch_grid = config["temporal"]["patch_grid"]
+    diff_accel_threshold = config["temporal"]["diff_acceleration_threshold"]
     cut_indices = {c.frame_index for c in cuts}
+    relaxed_ssim_ceiling = min(0.98, ssim_threshold + 0.12)
+    relaxed_diff_accel_floor = max(2.0, diff_accel_threshold * 20.0)
+    max_fallback_pairs = 3
+    min_fallback_score = 4.0
 
     evidence_frame_indices: list[int] = []
     evidence_bboxes: list[list[int]] = []
     evidence_notes: list[str] = []
+    fallback_candidates: list[
+        tuple[float, int, int, float, float, float, float, list[int], float]
+    ] = []
 
     for segment in segments:
         seg_frames = list(range(segment.start_frame, segment.end_frame + 1))
@@ -429,44 +441,116 @@ def _collect_temporal_evidence(
             frame_b = frames[idx_b]
             pair_ssim = compute_ssim(frame_a, frame_b)
 
+            # Find worst patch (lowest SSIM) in configured grid
+            rows, cols = patch_grid
+            h, w = frame_a.shape[:2]
+            patch_h = h // rows
+            patch_w = w // cols
+
+            worst_ssim = 1.0
+            worst_bbox: list[int] = [0, 0, w, h]
+            unstable_patch_count = 0
+            total_patches = rows * cols
+
+            for pi in range(rows):
+                for pj in range(cols):
+                    y1 = pi * patch_h
+                    y2 = (pi + 1) * patch_h if pi < rows - 1 else h
+                    x1 = pj * patch_w
+                    x2 = (pj + 1) * patch_w if pj < cols - 1 else w
+
+                    patch_a = frame_a[y1:y2, x1:x2]
+                    patch_b = frame_b[y1:y2, x1:x2]
+                    ps = compute_ssim(patch_a, patch_b)
+
+                    if ps < ssim_threshold:
+                        unstable_patch_count += 1
+
+                    if ps < worst_ssim:
+                        worst_ssim = ps
+                        worst_bbox = [x1, y1, x2, y2]
+
             if pair_ssim < ssim_threshold:
                 evidence_frame_indices.append(idx_a)
                 evidence_frame_indices.append(idx_b)
-
-                # Find worst patch (lowest SSIM) in 4x4 grid
-                rows, cols = patch_grid
-                h, w = frame_a.shape[:2]
-                patch_h = h // rows
-                patch_w = w // cols
-
-                worst_ssim = 1.0
-                worst_bbox: list[int] = [0, 0, w, h]
-
-                for pi in range(rows):
-                    for pj in range(cols):
-                        y1 = pi * patch_h
-                        y2 = (pi + 1) * patch_h if pi < rows - 1 else h
-                        x1 = pj * patch_w
-                        x2 = (pj + 1) * patch_w if pj < cols - 1 else w
-
-                        patch_a = frame_a[y1:y2, x1:x2]
-                        patch_b = frame_b[y1:y2, x1:x2]
-                        ps = compute_ssim(patch_a, patch_b)
-
-                        if ps < worst_ssim:
-                            worst_ssim = ps
-                            worst_bbox = [x1, y1, x2, y2]
-
                 evidence_bboxes.append(worst_bbox)
                 evidence_notes.append(
                     f"Frames {idx_a}-{idx_b}: SSIM={pair_ssim:.3f}, "
                     f"worst patch SSIM={worst_ssim:.3f}"
+                )
+                continue
+
+            pair_mae = compute_mae(frame_a, frame_b)
+            pair_patch_instability = unstable_patch_count / max(total_patches, 1)
+            if k < len(seg_frames) - 2:
+                frame_c = frames[seg_frames[k + 2]]
+                pair_diff_accel = compute_diff_acceleration(frame_a, frame_b, frame_c)
+            else:
+                pair_diff_accel = 0.0
+
+            flicker_signal = (
+                pair_ssim < relaxed_ssim_ceiling
+                or pair_mae >= 5.0
+                or pair_patch_instability > 0.0
+                or pair_diff_accel >= relaxed_diff_accel_floor
+            )
+            score = (
+                ((1.0 - pair_ssim) * 120.0)
+                + (pair_mae / 6.0)
+                + (pair_patch_instability * 20.0)
+                + (pair_diff_accel / max(1.0, relaxed_diff_accel_floor))
+            )
+
+            if flicker_signal and score >= min_fallback_score:
+                fallback_candidates.append(
+                    (
+                        score,
+                        idx_a,
+                        idx_b,
+                        pair_ssim,
+                        pair_mae,
+                        pair_patch_instability,
+                        pair_diff_accel,
+                        worst_bbox,
+                        worst_ssim,
+                    )
                 )
 
     if len(evidence_frame_indices) > 0:
         unique_indices = sorted(set(evidence_frame_indices))
         unique_timestamps = [timestamps[i] for i in unique_indices if i < len(timestamps)]
 
+        return Evidence(
+            timestamps=unique_timestamps,
+            bounding_boxes=evidence_bboxes,
+            frames=unique_indices,
+            notes=" | ".join(evidence_notes),
+        )
+
+    if len(fallback_candidates) > 0:
+        fallback_candidates.sort(key=lambda x: x[0], reverse=True)
+        for (
+            _score,
+            idx_a,
+            idx_b,
+            pair_ssim,
+            pair_mae,
+            pair_patch_instability,
+            pair_diff_accel,
+            worst_bbox,
+            worst_ssim,
+        ) in fallback_candidates[:max_fallback_pairs]:
+            evidence_frame_indices.append(idx_a)
+            evidence_frame_indices.append(idx_b)
+            evidence_bboxes.append(worst_bbox)
+            evidence_notes.append(
+                f"RELAXED_EVIDENCE Frames {idx_a}-{idx_b}: SSIM={pair_ssim:.3f}, "
+                f"MAE={pair_mae:.2f}, patch_instability={pair_patch_instability:.3f}, "
+                f"diff_accel={pair_diff_accel:.2f}, worst patch SSIM={worst_ssim:.3f}"
+            )
+
+        unique_indices = sorted(set(evidence_frame_indices))
+        unique_timestamps = [timestamps[i] for i in unique_indices if i < len(timestamps)]
         return Evidence(
             timestamps=unique_timestamps,
             bounding_boxes=evidence_bboxes,
