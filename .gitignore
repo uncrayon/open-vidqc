@@ -45,7 +45,7 @@ htmlcov/
 .tox/
 
 # Models and data
-models/
+/models/
 *.pkl
 *.json
 samples/*.mp4
