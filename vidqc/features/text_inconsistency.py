@@ -52,6 +52,7 @@ class OCRRegion:
     text: str
     confidence: float  # [0.0, 1.0]
     frame_index: int
+    source: str = "generic"
 
 
 @dataclass
@@ -176,6 +177,202 @@ def _parse_ocr_result(
     )
 
 
+def _segment_fallback_config(config: dict) -> dict:
+    """Extract segment display fallback config from main config.
+
+    Args:
+        config: Full configuration dict
+
+    Returns:
+        Fallback sub-config dict
+    """
+    return config.get("text", {}).get("segment_display_fallback", {})
+
+
+def _detect_display_candidates(frame: np.ndarray, cfg: dict) -> list[dict]:
+    """Find display-like rectangular regions via connected components.
+
+    Looks for bright, rectangular blobs that could be segmented displays
+    (clocks, timers, counters).
+
+    Args:
+        frame: RGB frame (uint8)
+        cfg: Fallback config dict with min/max_component_area_ratio
+
+    Returns:
+        List of candidate dicts with 'bbox' key [x1, y1, x2, y2]
+    """
+    min_area_ratio = cfg.get("min_component_area_ratio", 0.0005)
+    max_area_ratio = cfg.get("max_component_area_ratio", 0.2)
+    max_candidates = cfg.get("max_candidates", 4)
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    total_area = gray.shape[0] * gray.shape[1]
+
+    # Threshold to find bright regions (display panels tend to be bright)
+    _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+
+    # Connected components
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+
+    candidates = []
+    for i in range(1, num_labels):  # skip background (label 0)
+        area = stats[i, cv2.CC_STAT_AREA]
+        area_ratio = area / total_area
+
+        if area_ratio < min_area_ratio or area_ratio > max_area_ratio:
+            continue
+
+        x = stats[i, cv2.CC_STAT_LEFT]
+        y = stats[i, cv2.CC_STAT_TOP]
+        w = stats[i, cv2.CC_STAT_WIDTH]
+        h = stats[i, cv2.CC_STAT_HEIGHT]
+
+        candidates.append({
+            "bbox": [x, y, x + w, y + h],
+            "area_ratio": area_ratio,
+        })
+
+    # Sort by area (largest first) and limit
+    candidates.sort(key=lambda c: c["area_ratio"], reverse=True)
+    return candidates[:max_candidates]
+
+
+def _filter_segment_text_detections(
+    detections: list[dict], cfg: dict, frame_index: int
+) -> list[OCRRegion]:
+    """Filter OCR detections by allowlist characters and min confidence.
+
+    Only keeps detections where ALL characters are in the allowlist
+    and confidence meets the minimum threshold. Deduplicates overlapping
+    detections by IoU, keeping the highest confidence one.
+
+    Args:
+        detections: List of dicts with 'bbox', 'text', 'confidence'
+        cfg: Fallback config with 'allowlist' and 'min_confidence'
+        frame_index: Frame index for the OCRRegion
+
+    Returns:
+        List of filtered OCRRegion objects with source="segment_fallback"
+    """
+    allowlist = set(cfg.get("allowlist", "0123456789:"))
+    min_confidence = cfg.get("min_confidence", 0.3)
+    iou_dedup_threshold = 0.3
+
+    filtered = []
+    for det in detections:
+        text = det["text"]
+        conf = det["confidence"]
+
+        # Check confidence
+        if conf < min_confidence:
+            continue
+
+        # Check all characters are in allowlist
+        if not all(ch in allowlist for ch in text):
+            continue
+
+        filtered.append(det)
+
+    # Deduplicate by IoU — keep highest confidence
+    filtered.sort(key=lambda d: d["confidence"], reverse=True)
+    kept = []
+    for det in filtered:
+        is_dup = False
+        for existing in kept:
+            iou = compute_iou(det["bbox"], existing["bbox"])
+            if iou > iou_dedup_threshold:
+                is_dup = True
+                break
+        if not is_dup:
+            kept.append(det)
+
+    return [
+        OCRRegion(
+            bbox=det["bbox"],
+            text=det["text"],
+            confidence=det["confidence"],
+            frame_index=frame_index,
+            source="segment_fallback",
+        )
+        for det in kept
+    ]
+
+
+def _run_segment_display_fallback(
+    frame: np.ndarray,
+    frame_index: int,
+    reader: "easyocr.Reader",
+    cfg: dict,
+) -> tuple[list[OCRRegion], int]:
+    """Run segment display fallback OCR pipeline.
+
+    Detects display candidates, preprocesses crops, runs OCR, and filters.
+
+    Args:
+        frame: RGB frame (uint8)
+        frame_index: Frame index
+        reader: EasyOCR Reader instance
+        cfg: Fallback config dict
+
+    Returns:
+        Tuple of (list of OCRRegion, number of OCR calls made)
+    """
+    candidates = _detect_display_candidates(frame, cfg)
+    if not candidates:
+        return [], 0
+
+    variants = cfg.get("preprocess_variants", ["raw"])
+    allowlist_str = cfg.get("allowlist", "0123456789:")
+    all_detections = []
+    ocr_calls = 0
+
+    for candidate in candidates:
+        x1, y1, x2, y2 = candidate["bbox"]
+        crop = frame[y1:y2, x1:x2]
+        if crop.size == 0:
+            continue
+
+        for variant in variants:
+            if variant == "raw":
+                processed = crop
+            elif variant == "inv_clahe":
+                gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
+                inverted = cv2.bitwise_not(gray)
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                processed = clahe.apply(inverted)
+            elif variant == "inv_clahe_up2":
+                gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
+                inverted = cv2.bitwise_not(gray)
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                enhanced = clahe.apply(inverted)
+                processed = cv2.resize(enhanced, (enhanced.shape[1] * 2, enhanced.shape[0] * 2),
+                                       interpolation=cv2.INTER_CUBIC)
+            else:
+                continue
+
+            ocr_output = reader.readtext(processed, allowlist=allowlist_str)
+            ocr_calls += 1
+
+            for bbox_points, text, conf in ocr_output:
+                # Convert bbox back to frame coordinates
+                parsed_bbox = _parse_ocr_bbox(bbox_points)
+                frame_bbox = [
+                    parsed_bbox[0] + x1,
+                    parsed_bbox[1] + y1,
+                    parsed_bbox[2] + x1,
+                    parsed_bbox[3] + y1,
+                ]
+                all_detections.append({
+                    "bbox": frame_bbox,
+                    "text": text,
+                    "confidence": float(conf),
+                })
+
+    regions = _filter_segment_text_detections(all_detections, cfg, frame_index)
+    return regions, ocr_calls
+
+
 def _run_ocr_with_skip(
     frames: list[np.ndarray], timestamps: list[float], config: dict
 ) -> list[OCRFrameResult]:
@@ -198,12 +395,34 @@ def _run_ocr_with_skip(
     reader = _get_ocr_reader(config)
     threshold = config["text"]["ocr_skip_ssim_threshold"]
 
+    # Check if segment display fallback is enabled
+    fallback_cfg = _segment_fallback_config(config)
+    fallback_enabled = fallback_cfg.get("enabled", False)
+
     results = []
     skip_count = 0
 
+    def _maybe_fallback(frame: np.ndarray, frame_index: int, result: OCRFrameResult) -> OCRFrameResult:
+        """Apply segment display fallback if generic OCR returned no regions."""
+        if not fallback_enabled or len(result.regions) > 0:
+            return result
+        fallback_regions, _ = _run_segment_display_fallback(
+            frame, frame_index, reader, fallback_cfg
+        )
+        if fallback_regions:
+            return OCRFrameResult(
+                frame_index=frame_index,
+                timestamp=result.timestamp,
+                regions=fallback_regions,
+                was_skipped=False,
+                reused_from_index=None,
+            )
+        return result
+
     # Always OCR first frame
     ocr_output = reader.readtext(frames[0])
-    results.append(_parse_ocr_result(ocr_output, 0, timestamps[0]))
+    first_result = _parse_ocr_result(ocr_output, 0, timestamps[0])
+    results.append(_maybe_fallback(frames[0], 0, first_result))
 
     # For subsequent frames, check SSIM before OCR
     for i in tqdm(range(1, len(frames)), desc="  OCR frames", unit="frame", leave=False):
@@ -218,7 +437,8 @@ def _run_ocr_with_skip(
                     bbox=r.bbox.copy(),
                     text=r.text,
                     confidence=r.confidence,
-                    frame_index=i,  # Update to current frame
+                    frame_index=i,
+                    source=r.source,
                 )
                 for r in prev_result.regions
             ]
@@ -235,7 +455,8 @@ def _run_ocr_with_skip(
         else:
             # Run OCR
             ocr_output = reader.readtext(frames[i])
-            results.append(_parse_ocr_result(ocr_output, i, timestamps[i]))
+            frame_result = _parse_ocr_result(ocr_output, i, timestamps[i])
+            results.append(_maybe_fallback(frames[i], i, frame_result))
 
     skip_rate = skip_count / max(len(frames) - 1, 1)
     logger.debug(f"OCR skip rate: {skip_rate:.1%} ({skip_count}/{len(frames)-1} frames)")
