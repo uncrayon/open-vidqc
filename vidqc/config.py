@@ -129,6 +129,24 @@ def validate_config(config: dict) -> None:
                     f"must be in [0, 1] (got {fp['substitution_ratio_min']})"
                 )
 
+        # Validate segment display fallback config
+        if "segment_display_fallback" in text:
+            sdf = text["segment_display_fallback"]
+            allowed_variants = {"raw", "inv_clahe", "inv_clahe_up2"}
+            if "preprocess_variants" in sdf:
+                variants = sdf["preprocess_variants"]
+                if not isinstance(variants, list) or len(variants) == 0:
+                    raise ValueError(
+                        "Config validation failed: text.segment_display_fallback.preprocess_variants "
+                        "must be a non-empty list"
+                    )
+                invalid = [v for v in variants if v not in allowed_variants]
+                if invalid:
+                    raise ValueError(
+                        f"Config validation failed: text.segment_display_fallback.preprocess_variants "
+                        f"contains invalid values {invalid}. Allowed: {sorted(allowed_variants)}"
+                    )
+
     # Validate temporal config
     if "temporal" in config:
         temporal = config["temporal"]

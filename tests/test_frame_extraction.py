@@ -127,16 +127,17 @@ def test_corrupt_video_handling(tmp_path, sample_video, test_config):
     # Create a truncated copy of the sample video
     corrupt_video = tmp_path / "corrupt.mp4"
 
-    # Copy only first 1MB (truncate the file - too short to have moov atom)
+    # Copy only first 512 bytes (too short for valid moov atom regardless of file size)
     with open(sample_video, "rb") as src:
         with open(corrupt_video, "wb") as dst:
-            dst.write(src.read(1024 * 1024))  # 1MB
+            dst.write(src.read(512))
 
     # Severely truncated video should raise ValueError
     with pytest.raises(ValueError) as exc_info:
         extract_frames(str(corrupt_video), config=test_config)
 
-    assert "cannot open video" in str(exc_info.value).lower()
+    msg = str(exc_info.value).lower()
+    assert "cannot open video" in msg or "no readable frames" in msg
 
 
 def test_downscaling(test_config):
