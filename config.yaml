@@ -52,6 +52,9 @@ model:
                                 # Higher = more recall, more false positives (0.6-0.7 for quality gates).
                                 # Lower = more precision, fewer false positives (0.3-0.4 for triage).
   xgboost:
+    device: "auto"             # auto = use CUDA when runtime + xgboost build support it.
+                               # cuda = force request GPU (falls back to CPU if unavailable).
+                               # cpu = force CPU.
     n_estimators: 50
     max_depth: 3
     learning_rate: 0.1

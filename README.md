@@ -11,7 +11,7 @@ v0.1.0 (Milestones 1–7 complete)
 - **Two artifact categories detected:**
   - **TEXT_INCONSISTENCY**: OCR-based text stability analysis (character mutations, jitter, erasure)
   - **TEMPORAL_FLICKER**: Frame-to-frame pixel/structural instability detection
-- **Feature engineering + XGBoost classifier** (works on small datasets, CPU-only)
+- **Feature engineering + XGBoost classifier** with automatic CPU/GPU device selection
 - **Explainable predictions** with frame-level evidence and probability scores
 - **Scene-aware analysis** with automatic scene cut detection and per-segment analysis
 - **Smart caching** for feature extraction (106x faster on repeated runs)
@@ -331,6 +331,7 @@ video:
   max_resolution: 720        # Downscale to 720p
 
 text:
+  ocr_gpu: "auto"                  # auto/true/false
   ocr_skip_ssim_threshold: 0.995  # Skip OCR if frame similarity > threshold
   edit_distance_threshold: 2       # Min edit distance for artifact
   bbox_iou_threshold: 0.3          # Min IoU for region matching
@@ -342,7 +343,9 @@ temporal:
 
 model:
   binary_threshold: 0.5            # P(NONE) < threshold = artifact
-  seed: 42                         # For reproducibility
+  xgboost:
+    device: "auto"                 # auto/cuda/cpu
+    seed: 42                       # For reproducibility
 ```
 
 ## Performance
@@ -352,6 +355,13 @@ model:
 - **Cache speedup**: 106x faster on repeated training runs
 - **Model size**: ~100KB (XGBoost JSON)
 - **Target latency**: < 60s per clip (aspirational — requires GPU or OCR optimization)
+
+## GPU Roadmap
+
+- **Implemented (Phase 1)**: Auto GPU detection/fallback for OCR and XGBoost.
+- **Planned (Phase 2)**: GPU backends for SSIM/MAE/histogram loops in text + temporal feature extraction.
+- **Planned (Phase 2)**: Optional GPU-accelerated video decode/resize path (when backend support is present).
+- **Planned (Phase 2)**: Clip-level parallel feature extraction to improve throughput further.
 
 ## Documentation
 
