@@ -372,4 +372,9 @@ model:
 
 ## License
 
-(To be determined)
+This project is source-available under the **PolyForm Noncommercial License 1.0.0**.
+
+- Noncommercial use (including research and educational use) is allowed under `LICENSE`.
+- Commercial use is not granted under `LICENSE`.
+
+For any commercial use, you must obtain a separate paid license. See `COMMERCIAL_LICENSE.md`.
