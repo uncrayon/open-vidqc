@@ -74,6 +74,57 @@ class MatchedRegionPair:
     iou: float
 
 
+def _bbox_width_height(bbox: list[int]) -> tuple[int, int]:
+    """Return non-negative width/height for [x1, y1, x2, y2]."""
+    x1, y1, x2, y2 = bbox
+    return max(0, x2 - x1), max(0, y2 - y1)
+
+
+def _summarize_ocr_bbox_sizes(ocr_results: list[OCRFrameResult]) -> dict[str, int]:
+    """Summarize OCR bbox dimensions for diagnostics/logging."""
+    widths = []
+    heights = []
+    for result in ocr_results:
+        for region in result.regions:
+            w, h = _bbox_width_height(region.bbox)
+            widths.append(w)
+            heights.append(h)
+
+    if len(widths) == 0:
+        return {
+            "total_regions": 0,
+            "min_width": 0,
+            "min_height": 0,
+            "max_width": 0,
+            "max_height": 0,
+            "tiny_lt7_count": 0,
+            "tiny_lt3_count": 0,
+        }
+
+    tiny_lt7_count = sum(1 for w, h in zip(widths, heights) if min(w, h) < 7)
+    tiny_lt3_count = sum(1 for w, h in zip(widths, heights) if min(w, h) < 3)
+    return {
+        "total_regions": len(widths),
+        "min_width": min(widths),
+        "min_height": min(heights),
+        "max_width": max(widths),
+        "max_height": max(heights),
+        "tiny_lt7_count": tiny_lt7_count,
+        "tiny_lt3_count": tiny_lt3_count,
+    }
+
+
+def _format_bbox_stats_for_log(stats: dict[str, int]) -> str:
+    """Format bbox stats as a compact log string."""
+    return (
+        f"regions={stats['total_regions']}, "
+        f"min={stats['min_width']}x{stats['min_height']}, "
+        f"max={stats['max_width']}x{stats['max_height']}, "
+        f"tiny<7={stats['tiny_lt7_count']}, "
+        f"tiny<3={stats['tiny_lt3_count']}"
+    )
+
+
 def _resolve_ocr_gpu(config: dict) -> bool:
     """Resolve the ocr_gpu config value to a concrete boolean.
 
@@ -703,6 +754,7 @@ def extract_text_features(
 
     # Step 1: OCR with skip optimization
     ocr_results = _run_ocr_with_skip(frames, timestamps, config)
+    bbox_stats = _summarize_ocr_bbox_sizes(ocr_results)
 
     # Step 0: Text presence gate
     frames_with_text = sum(1 for r in ocr_results if len(r.regions) > 0)
@@ -717,36 +769,50 @@ def extract_text_features(
         f"Text detected: {frames_with_text}/{len(ocr_results)} frames, "
         f"{total_text_regions} total regions"
     )
-
-    # Step 2: Match text regions across consecutive frames
-    all_matched_pairs = []
-    for i in range(len(ocr_results) - 1):
-        pairs = _match_text_regions(
-            ocr_results[i].regions,
-            ocr_results[i + 1].regions,
-            config["text"]["bbox_iou_threshold"],
-        )
-        all_matched_pairs.extend(pairs)
-
-    if len(all_matched_pairs) == 0:
-        logger.info("No matched text regions across frames, returning zero features")
-        return get_zero_features(), None
-
-    # Step 3: Compute per-region features
-    per_region_feats = _compute_per_region_features(all_matched_pairs, frames)
-
-    # Step 4: Compute FP suppression features
-    fp_feats = _compute_fp_suppression_features(all_matched_pairs, frames, ocr_results, config)
-
-    # Step 5: Aggregate to clip level
-    features = _aggregate_clip_features(
-        per_region_feats, fp_feats, True, frames_with_text_ratio, total_text_regions
+    logger.debug(
+        f"OCR bbox stats for {video_path}: {_format_bbox_stats_for_log(bbox_stats)}"
     )
 
-    # Step 6: Collect evidence
-    evidence = _collect_evidence(all_matched_pairs, frames, timestamps, per_region_feats, config)
-    if evidence:
-        logger.info(f"TEXT_INCONSISTENCY evidence: {evidence.notes}")
+    try:
+        # Step 2: Match text regions across consecutive frames
+        all_matched_pairs = []
+        for i in range(len(ocr_results) - 1):
+            pairs = _match_text_regions(
+                ocr_results[i].regions,
+                ocr_results[i + 1].regions,
+                config["text"]["bbox_iou_threshold"],
+            )
+            all_matched_pairs.extend(pairs)
+
+        if len(all_matched_pairs) == 0:
+            logger.info("No matched text regions across frames, returning zero features")
+            return get_zero_features(), None
+
+        # Step 3: Compute per-region features
+        per_region_feats = _compute_per_region_features(all_matched_pairs, frames)
+
+        # Step 4: Compute FP suppression features
+        fp_feats = _compute_fp_suppression_features(all_matched_pairs, frames, ocr_results, config)
+
+        # Step 5: Aggregate to clip level
+        features = _aggregate_clip_features(
+            per_region_feats, fp_feats, True, frames_with_text_ratio, total_text_regions
+        )
+
+        # Step 6: Collect evidence
+        evidence = _collect_evidence(all_matched_pairs, frames, timestamps, per_region_feats, config)
+        if evidence:
+            logger.info(f"TEXT_INCONSISTENCY evidence: {evidence.notes}")
+    except Exception as e:
+        stats_text = _format_bbox_stats_for_log(bbox_stats)
+        logger.error(
+            "Text feature internals failed for %s | bbox_stats: %s",
+            video_path,
+            stats_text,
+        )
+        raise ValueError(
+            f"Text feature internals failed for {video_path} | bbox_stats: {stats_text} | {e}"
+        ) from e
 
     # Validate
     from vidqc.features.feature_manifest import validate_features

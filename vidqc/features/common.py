@@ -26,8 +26,20 @@ def compute_ssim(frame_a: np.ndarray, frame_b: np.ndarray) -> float:
     gray_a = cv2.cvtColor(frame_a, cv2.COLOR_RGB2GRAY)
     gray_b = cv2.cvtColor(frame_b, cv2.COLOR_RGB2GRAY)
 
+    # skimage default win_size=7 fails for small crops (<7px side).
+    # Use the largest valid odd window up to 7, and fall back gracefully
+    # for very tiny crops where SSIM is ill-defined.
+    min_side = min(gray_a.shape[0], gray_a.shape[1])
+    if min_side < 3:
+        diff = np.mean(np.abs(gray_a.astype(np.float32) - gray_b.astype(np.float32)))
+        return float(np.clip(1.0 - (diff / 255.0), 0.0, 1.0))
+
+    win_size = min(7, min_side)
+    if win_size % 2 == 0:
+        win_size -= 1
+
     # Compute SSIM with full data range for uint8
-    return float(ssim(gray_a, gray_b, data_range=255))
+    return float(ssim(gray_a, gray_b, data_range=255, win_size=win_size))
 
 
 def crop_bbox(frame: np.ndarray, bbox: list[int]) -> np.ndarray:
