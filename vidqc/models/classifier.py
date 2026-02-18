@@ -152,12 +152,30 @@ class VidQCClassifier:
         # Create DMatrix
         dtrain = xgb.DMatrix(X, label=y, feature_names=feature_names)
 
-        # Train model
-        self.model = xgb.train(
-            params,
-            dtrain,
-            num_boost_round=params.get("n_estimators", 50),
-        )
+        # Train model. If CUDA training fails, retry on CPU once.
+        try:
+            self.model = xgb.train(
+                params,
+                dtrain,
+                num_boost_round=params.get("n_estimators", 50),
+            )
+        except xgb.core.XGBoostError as exc:
+            if resolved_device != "cuda":
+                raise
+
+            logger.warning(
+                "XGBoost training failed on CUDA (%s), retrying on CPU once",
+                exc,
+            )
+            retry_params = params.copy()
+            retry_params["device"] = "cpu"
+            self.model = xgb.train(
+                retry_params,
+                dtrain,
+                num_boost_round=retry_params.get("n_estimators", 50),
+            )
+            self._resolved_xgboost_device = "cpu"
+            resolved_device = "cpu"
         self._apply_model_device(resolved_device)
 
         self.feature_names = feature_names

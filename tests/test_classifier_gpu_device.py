@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 import xgboost as xgb
 
 from vidqc.models.classifier import VidQCClassifier
@@ -153,3 +154,65 @@ def test_load_falls_back_when_cuda_param_set_fails(monkeypatch, tmp_path: Path):
     classifier.load(str(model_path))
 
     assert fake_booster.params[-1] == {"device": "cpu"}
+
+
+def test_train_retries_on_cpu_when_cuda_training_fails(monkeypatch):
+    calls = []
+
+    class FakeBooster:
+        def __init__(self):
+            self.params = []
+
+        def set_param(self, params):
+            self.params.append(params)
+
+    def fake_train(params, dtrain, num_boost_round):
+        calls.append(params.copy())
+        if params.get("device") == "cuda":
+            raise xgb.core.XGBoostError("cuda training failure")
+        return FakeBooster()
+
+    monkeypatch.setattr(
+        "vidqc.models.classifier.resolve_xgboost_device",
+        lambda requested: ("cuda", "test"),
+    )
+    monkeypatch.setattr(
+        "vidqc.models.classifier.xgb.DMatrix",
+        lambda X, label, feature_names: ("dmatrix", X, label, feature_names),
+    )
+    monkeypatch.setattr("vidqc.models.classifier.xgb.train", fake_train)
+
+    classifier = VidQCClassifier(_config(device="cuda"))
+    X, y, feature_names = _training_data()
+    classifier.train(X, y, feature_names)
+
+    assert len(calls) == 2
+    assert calls[0]["device"] == "cuda"
+    assert calls[1]["device"] == "cpu"
+
+
+def test_train_does_not_retry_for_cpu_training_failure(monkeypatch):
+    calls = []
+
+    def fake_train(params, dtrain, num_boost_round):
+        calls.append(params.copy())
+        raise xgb.core.XGBoostError("cpu training failure")
+
+    monkeypatch.setattr(
+        "vidqc.models.classifier.resolve_xgboost_device",
+        lambda requested: ("cpu", "test"),
+    )
+    monkeypatch.setattr(
+        "vidqc.models.classifier.xgb.DMatrix",
+        lambda X, label, feature_names: ("dmatrix", X, label, feature_names),
+    )
+    monkeypatch.setattr("vidqc.models.classifier.xgb.train", fake_train)
+
+    classifier = VidQCClassifier(_config(device="cpu"))
+    X, y, feature_names = _training_data()
+
+    with pytest.raises(xgb.core.XGBoostError):
+        classifier.train(X, y, feature_names)
+
+    assert len(calls) == 1
+    assert calls[0]["device"] == "cpu"
