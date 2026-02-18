@@ -9,8 +9,9 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
+from tests.conftest import get_test_font
 from vidqc.features.text_inconsistency import extract_text_features
 
 
@@ -31,13 +32,7 @@ def create_text_frame(
     img = Image.new("RGB", size, color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
 
-    # Use default font (may vary by system)
-    try:
-        # Try to load a TTF font
-        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 48)
-    except Exception:
-        # Fall back to default font
-        font = ImageFont.load_default()
+    font = get_test_font(48)
 
     # Draw black text
     draw.text(position, text, fill=(0, 0, 0), font=font)

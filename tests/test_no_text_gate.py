@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 
+from tests.conftest import get_test_font
 from vidqc.features.text_inconsistency import extract_text_features
 
 
@@ -104,16 +105,11 @@ def test_text_vs_no_text_same_length():
     notext_frames = [create_geometric_frame("circle") for _ in range(5)]
 
     # Text video
-    from PIL import ImageDraw, ImageFont
-
     text_frames = []
     for _ in range(5):
         img = Image.new("RGB", (1280, 720), color=(255, 255, 255))
         draw = ImageDraw.Draw(img)
-        try:
-            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 48)
-        except Exception:
-            font = ImageFont.load_default()
+        font = get_test_font(48)
         draw.text((200, 300), "TEST TEXT", fill=(0, 0, 0), font=font)
         text_frames.append(np.array(img))
 

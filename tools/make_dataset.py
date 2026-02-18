@@ -25,7 +25,11 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-FONT_PATH = "/System/Library/Fonts/Helvetica.ttc"
+_FONT_PATHS = [
+    "/System/Library/Fonts/Helvetica.ttc",  # macOS
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Ubuntu/Debian
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",  # Fedora/RHEL
+]
 ROTATION_CHOICES = [90, 180, 270]
 ANCHOR_POSITIONS = {
     "top_left": (0.15, 0.15),
@@ -48,11 +52,13 @@ def add_gaussian_noise(frame: np.ndarray, sigma: float = 2.0) -> np.ndarray:
 
 
 def _load_font(font_size: int):
-    """Load font with fallback."""
-    try:
-        return ImageFont.truetype(FONT_PATH, font_size)
-    except Exception:
-        return ImageFont.load_default()
+    """Load font with cross-platform fallback."""
+    for path in _FONT_PATHS:
+        try:
+            return ImageFont.truetype(path, font_size)
+        except (OSError, IOError):
+            continue
+    return ImageFont.load_default(size=font_size)
 
 
 def _get_anchor_center(width: int, height: int, anchor_name: str) -> tuple[int, int]:
