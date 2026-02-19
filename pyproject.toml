@@ -3,6 +3,7 @@ name = "vidqc"
 version = "0.1.0"
 description = "Video artifact detection for AI-generated clips"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = [
     "opencv-python-headless>=4.9",
