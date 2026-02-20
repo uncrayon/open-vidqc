@@ -31,3 +31,12 @@ def test_model_xgboost_device_rejects_invalid_value():
 
     with pytest.raises(ValueError, match="model.xgboost.device"):
         validate_config(cfg)
+
+
+@pytest.mark.parametrize("value", [None, 123, "bad", [1, 2]])
+def test_model_xgboost_rejects_non_mapping(value):
+    cfg = _base_model_config()
+    cfg["model"]["xgboost"] = value
+
+    with pytest.raises(ValueError, match="model.xgboost"):
+        validate_config(cfg)

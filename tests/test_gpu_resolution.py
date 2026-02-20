@@ -71,3 +71,62 @@ def test_resolve_xgboost_device_explicit_cpu():
     )
     assert resolved == "cpu"
     assert reason == "requested=cpu"
+
+
+def test_resolve_xgboost_device_uses_xgboost_runtime_probe(monkeypatch):
+    """XGBoost resolution must not rely on torch runtime checks."""
+
+    def _unexpected_torch_probe():
+        raise AssertionError("torch runtime probe should not be called")
+
+    monkeypatch.setattr(
+        "vidqc.utils.acceleration.detect_runtime_cuda_available",
+        _unexpected_torch_probe,
+    )
+    monkeypatch.setattr(
+        "vidqc.utils.acceleration.detect_xgboost_runtime_cuda_available",
+        lambda: (True, "xgb_runtime_probe=true"),
+    )
+    monkeypatch.setattr(
+        "vidqc.utils.acceleration.detect_xgboost_cuda_build",
+        lambda: (True, "xgb_build=true"),
+    )
+
+    resolved, reason = resolve_xgboost_device("auto")
+    assert resolved == "cuda"
+    assert "xgb_runtime_probe=true" in reason
+    assert "xgb_build=true" in reason
+
+
+def test_resolve_xgboost_device_auto_uses_runtime_probe_result(monkeypatch):
+    monkeypatch.setattr(
+        "vidqc.utils.acceleration.detect_xgboost_runtime_cuda_available",
+        lambda: (False, "xgb_runtime_probe=false"),
+    )
+    monkeypatch.setattr(
+        "vidqc.utils.acceleration.detect_xgboost_cuda_build",
+        lambda: (True, "xgb_build=true"),
+    )
+
+    resolved, reason = resolve_xgboost_device("auto")
+    assert resolved == "cpu"
+    assert "requested=auto" in reason
+    assert "xgb_runtime_probe=false" in reason
+
+
+def test_resolve_xgboost_device_explicit_cuda_fallback_uses_runtime_probe(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "vidqc.utils.acceleration.detect_xgboost_runtime_cuda_available",
+        lambda: (False, "xgb_runtime_probe=false"),
+    )
+    monkeypatch.setattr(
+        "vidqc.utils.acceleration.detect_xgboost_cuda_build",
+        lambda: (True, "xgb_build=true"),
+    )
+
+    resolved, reason = resolve_xgboost_device("cuda")
+    assert resolved == "cpu"
+    assert "requested=cuda; fallback=cpu" in reason
+    assert "xgb_runtime_probe=false" in reason

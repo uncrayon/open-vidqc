@@ -1,5 +1,6 @@
 """GPU/CPU acceleration resolution helpers."""
 
+from functools import lru_cache
 from typing import Optional
 
 _ALLOWED_XGBOOST_DEVICES = {"auto", "cpu", "cuda"}
@@ -34,6 +35,45 @@ def detect_xgboost_cuda_build() -> tuple[bool, str]:
 
     use_cuda = bool(build_info.get("USE_CUDA", False))
     return use_cuda, f"xgboost.build_info.USE_CUDA={use_cuda}"
+
+
+@lru_cache(maxsize=1)
+def detect_xgboost_runtime_cuda_available() -> tuple[bool, str]:
+    """Probe whether XGBoost can actually execute with device=cuda at runtime."""
+    build_ok, build_reason = detect_xgboost_cuda_build()
+    if not build_ok:
+        return False, f"{build_reason}; runtime_probe_skipped"
+
+    try:
+        import xgboost as xgb
+    except ImportError:
+        return False, "xgboost_not_installed"
+
+    # Tiny smoke probe: one boosting round on a 2-row dataset using CUDA.
+    dprobe = xgb.DMatrix([[0.0], [1.0]], label=[0.0, 1.0], feature_names=["f0"])
+    probe_params = {
+        "device": "cuda",
+        "tree_method": "hist",
+        "objective": "binary:logistic",
+        "max_depth": 1,
+        "eta": 1.0,
+        "verbosity": 0,
+    }
+
+    try:
+        xgb.train(probe_params, dprobe, num_boost_round=1)
+    except xgb.core.XGBoostError as exc:
+        return False, (
+            f"{build_reason}; "
+            f"xgboost_cuda_runtime_probe_failed:{exc.__class__.__name__}"
+        )
+    except Exception as exc:  # pragma: no cover - defensive guard
+        return False, (
+            f"{build_reason}; "
+            f"xgboost_cuda_runtime_probe_failed:{exc.__class__.__name__}"
+        )
+
+    return True, f"{build_reason}; xgboost_cuda_runtime_probe_ok"
 
 
 def resolve_ocr_gpu(
@@ -75,15 +115,19 @@ def resolve_xgboost_device(
     if requested == "cpu":
         return "cpu", "requested=cpu"
 
-    if runtime_cuda_available is None:
-        runtime_cuda_available, runtime_reason = detect_runtime_cuda_available()
-    else:
-        runtime_reason = f"runtime_cuda_override={runtime_cuda_available}"
-
     if xgboost_cuda_build is None:
         xgboost_cuda_build, build_reason = detect_xgboost_cuda_build()
     else:
         build_reason = f"xgboost_cuda_build_override={xgboost_cuda_build}"
+
+    if runtime_cuda_available is None:
+        runtime_cuda_available, runtime_reason = (
+            detect_xgboost_runtime_cuda_available()
+        )
+    else:
+        runtime_reason = (
+            f"xgboost_runtime_cuda_override={runtime_cuda_available}"
+        )
 
     runtime_ok = bool(runtime_cuda_available)
     build_ok = bool(xgboost_cuda_build)

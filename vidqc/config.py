@@ -4,6 +4,7 @@ This module provides a singleton configuration system with lazy loading,
 YAML-based defaults, and support for CLI overrides.
 """
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Optional
 
@@ -199,14 +200,26 @@ def validate_config(config: dict) -> None:
                 f"Config validation failed: model.binary_threshold must be in [0, 1] "
                 f"(got {model['binary_threshold']})"
             )
-        if "xgboost" in model and "device" in model["xgboost"]:
-            raw = model["xgboost"]["device"]
-            if not isinstance(raw, str) or raw.lower().strip() not in {"auto", "cpu", "cuda"}:
+        if "xgboost" in model:
+            xgboost_config = model["xgboost"]
+            if not isinstance(xgboost_config, Mapping):
                 raise ValueError(
-                    "Config validation failed: model.xgboost.device must be one of "
-                    "'auto', 'cpu', or 'cuda' "
-                    f"(got {raw!r})"
+                    "Config validation failed: model.xgboost must be a mapping "
+                    f"(got {xgboost_config!r})"
                 )
+
+            if "device" in xgboost_config:
+                raw = xgboost_config["device"]
+                if not isinstance(raw, str) or raw.lower().strip() not in {
+                    "auto",
+                    "cpu",
+                    "cuda",
+                }:
+                    raise ValueError(
+                        "Config validation failed: model.xgboost.device must be one of "
+                        "'auto', 'cpu', or 'cuda' "
+                        f"(got {raw!r})"
+                    )
 
 
 def load_config(path: str = "config.yaml", overrides: Optional[dict] = None) -> dict:
