@@ -1138,9 +1138,9 @@ video:
 # TEXT_INCONSISTENCY detection
 text:
   ocr_languages: ["en"]
-  ocr_gpu: false                # Set true if GPU available.
+  ocr_gpu: "auto"               # auto = detect CUDA runtime via torch.
+                                # true = force GPU, false = force CPU.
                                 # GPU mode requires pytorch with CUDA.
-                                # CPU mode uses pytorch CPU-only (default install).
   ocr_skip_ssim_threshold: 0.995 # Skip OCR if frame is near-identical to previous.
                                   # Set high (0.995 not 0.98) to avoid skipping frames
                                   # where small text regions mutated on a stable background.
@@ -1183,6 +1183,9 @@ model:
                                 # Higher = more recall, more false positives (0.6-0.7 for quality gates).
                                 # Lower = more precision, fewer false positives (0.3-0.4 for triage).
   xgboost:
+    device: "auto"              # auto = use CUDA when runtime + xgboost build support it.
+                                # cuda = force request GPU (safe fallback to CPU).
+                                # cpu = force CPU.
     n_estimators: 50
     max_depth: 3
     learning_rate: 0.1

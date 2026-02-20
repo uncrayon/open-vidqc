@@ -35,6 +35,7 @@ from vidqc.features.common import (
 )
 from vidqc.features.feature_manifest import get_zero_features
 from vidqc.schemas import Evidence
+from vidqc.utils.acceleration import resolve_ocr_gpu
 from vidqc.utils.logging import get_logger
 from vidqc.utils.video import extract_frames
 
@@ -75,37 +76,6 @@ class MatchedRegionPair:
     iou: float
 
 
-def _resolve_ocr_gpu(config: dict) -> bool:
-    """Resolve the ocr_gpu config value to a concrete boolean.
-
-    Args:
-        config: Configuration dict with text.ocr_gpu
-
-    Returns:
-        True if GPU should be used, False otherwise
-    """
-    raw = config["text"].get("ocr_gpu", "auto")
-
-    if isinstance(raw, bool):
-        return raw
-
-    value = str(raw).lower().strip()
-    if value == "true":
-        return True
-    if value == "false":
-        return False
-
-    # "auto" or any unrecognized value: detect CUDA
-    try:
-        import torch
-        use_gpu = torch.cuda.is_available()
-    except ImportError:
-        use_gpu = False
-
-    logger.info(f"ocr_gpu=auto: CUDA {'available' if use_gpu else 'not available'}, using {'GPU' if use_gpu else 'CPU'}")
-    return use_gpu
-
-
 def _get_ocr_reader(config: dict) -> easyocr.Reader:
     """Get or initialize EasyOCR reader (singleton pattern).
 
@@ -119,7 +89,14 @@ def _get_ocr_reader(config: dict) -> easyocr.Reader:
     """
     global _ocr_reader
     if _ocr_reader is None:
-        use_gpu = _resolve_ocr_gpu(config)
+        raw_gpu = config["text"].get("ocr_gpu", "auto")
+        use_gpu, reason = resolve_ocr_gpu(raw_gpu)
+        logger.info(
+            "ocr_gpu requested=%r resolved=%s reason=%s",
+            raw_gpu,
+            "GPU" if use_gpu else "CPU",
+            reason,
+        )
         logger.info(
             f"Initializing EasyOCR (downloading weights if not cached, ~100MB)... "
             f"[gpu={use_gpu}]"

@@ -22,6 +22,7 @@ def config():
         "model": {
             "binary_threshold": 0.5,
             "xgboost": {
+                "device": "cpu",
                 "n_estimators": 10,
                 "max_depth": 3,
                 "learning_rate": 0.1,

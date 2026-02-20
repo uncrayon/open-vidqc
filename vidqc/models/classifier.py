@@ -16,6 +16,7 @@ from typing import Optional
 import numpy as np
 import xgboost as xgb
 
+from vidqc.utils.acceleration import resolve_xgboost_device
 from vidqc.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -63,6 +64,40 @@ class VidQCClassifier:
         self.model: Optional[xgb.Booster] = None
         self.feature_names: Optional[list[str]] = None
         self.class_names = ["NONE", "TEXT_INCONSISTENCY", "TEMPORAL_FLICKER"]
+        self._resolved_xgboost_device: str = "cpu"
+
+    def _resolve_device_from_config(self) -> str:
+        """Resolve and log the effective XGBoost device from config."""
+        requested_device = self.config.get("model", {}).get("xgboost", {}).get(
+            "device", "auto"
+        )
+        resolved_device, reason = resolve_xgboost_device(requested_device)
+        logger.info(
+            "xgboost device requested=%r resolved=%s reason=%s",
+            requested_device,
+            resolved_device,
+            reason,
+        )
+        self._resolved_xgboost_device = resolved_device
+        return resolved_device
+
+    def _apply_model_device(self, device: str) -> None:
+        """Apply resolved device to an already-loaded booster."""
+        if self.model is None:
+            return
+
+        try:
+            self.model.set_param({"device": device})
+        except xgb.core.XGBoostError as exc:
+            if device == "cuda":
+                logger.warning(
+                    "Failed to set XGBoost device=cuda (%s), falling back to CPU",
+                    exc,
+                )
+                self.model.set_param({"device": "cpu"})
+                self._resolved_xgboost_device = "cpu"
+            else:
+                logger.warning("Failed to set XGBoost device=%s: %s", device, exc)
 
     def train(
         self, X: np.ndarray, y: np.ndarray, feature_names: list[str]
@@ -104,6 +139,12 @@ class VidQCClassifier:
 
         # Get XGBoost params from config
         params = self.config["model"]["xgboost"].copy()
+        resolved_device = self._resolve_device_from_config()
+        params["device"] = resolved_device
+
+        # CUDA path in XGBoost expects hist tree method.
+        if resolved_device == "cuda" and "tree_method" not in params:
+            params["tree_method"] = "hist"
 
         # Ensure seed is set for determinism
         params["seed"] = 42
@@ -111,12 +152,31 @@ class VidQCClassifier:
         # Create DMatrix
         dtrain = xgb.DMatrix(X, label=y, feature_names=feature_names)
 
-        # Train model
-        self.model = xgb.train(
-            params,
-            dtrain,
-            num_boost_round=params.get("n_estimators", 50),
-        )
+        # Train model. If CUDA training fails, retry on CPU once.
+        try:
+            self.model = xgb.train(
+                params,
+                dtrain,
+                num_boost_round=params.get("n_estimators", 50),
+            )
+        except xgb.core.XGBoostError as exc:
+            if resolved_device != "cuda":
+                raise
+
+            logger.warning(
+                "XGBoost training failed on CUDA (%s), retrying on CPU once",
+                exc,
+            )
+            retry_params = params.copy()
+            retry_params["device"] = "cpu"
+            self.model = xgb.train(
+                retry_params,
+                dtrain,
+                num_boost_round=retry_params.get("n_estimators", 50),
+            )
+            self._resolved_xgboost_device = "cpu"
+            resolved_device = "cpu"
+        self._apply_model_device(resolved_device)
 
         self.feature_names = feature_names
 
@@ -257,6 +317,8 @@ class VidQCClassifier:
 
         # Extract feature names from model
         self.feature_names = self.model.feature_names
+        resolved_device = self._resolve_device_from_config()
+        self._apply_model_device(resolved_device)
 
         logger.info(f"Model loaded from {path}")
 
