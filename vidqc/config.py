@@ -215,11 +215,13 @@ def validate_config(config: dict) -> None:
                     "cpu",
                     "cuda",
                 }:
+                    logger.debug(f"LOL, check your config: {xgboost_config}")
                     raise ValueError(
                         "Config validation failed: model.xgboost.device must be one of "
                         "'auto', 'cpu', or 'cuda' "
                         f"(got {raw!r})"
                     )
+                logger.info(f"Loaded XGBoost device from {xgboost_config}")
 
 
 def load_config(path: str = "config.yaml", overrides: Optional[dict] = None) -> dict:
