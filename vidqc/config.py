@@ -226,6 +226,11 @@ def validate_config(config: dict) -> None:
     # Validate logging config
     if "logging" in config:
         logging_cfg = config["logging"]
+        if not isinstance(logging_cfg, Mapping):
+            raise ValueError(
+                f"Config validation failed: logging must be a mapping "
+                f"(got {logging_cfg!r})"
+            )
         if "level" in logging_cfg:
             level = logging_cfg["level"]
             if not isinstance(level, str) or level.upper() not in {"DEBUG", "INFO", "WARNING", "ERROR"}:
