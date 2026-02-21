@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 
 
 def _load_config(config_path: str) -> dict:
-    """Load config with error handling.
+    """Load config with error handling and initialize logging.
 
     Args:
         config_path: Path to config YAML file
@@ -27,10 +27,22 @@ def _load_config(config_path: str) -> dict:
         Config dict
     """
     from vidqc.config import load_config
+    from vidqc.utils.logging import setup_logging
 
     try:
-        return load_config(config_path)
+        config = load_config(config_path)
+        
+        # Initialize logging based on loaded config
+        logging_config = config.get("logging", {})
+        level = logging_config.get("level", "INFO")
+        log_file = logging_config.get("file", None)
+        
+        setup_logging(level=level, log_file=log_file)
+        
+        return config
     except ValueError as e:
+        # Fallback logging if config parsing fails
+        setup_logging(level="INFO")
         logger.error(f"Invalid configuration: {e}")
         sys.exit(1)
 
